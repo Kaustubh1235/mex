@@ -2,7 +2,7 @@ import { lstatSync } from "node:fs";
 import {
   SetupContactRequestSchema, submitContactPayload, WEB3FORMS_ACCESS_KEY,
   type ContactPreference, type ContactPreferenceRequest, type SetupContactRequest, type SetupContactResponse,
-} from "@mex/hub-contracts/setup";
+} from "@mex/hub-contracts/contact";
 import { mexHomeDir, ensureMexHomeDir } from "../global-config.js";
 import { atomicCreateArtifact, tryReadContainedArtifact, withContainedArtifactLock } from "../team/artifacts/filesystem.js";
 import { VERSION } from "../version.js";

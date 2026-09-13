@@ -6,7 +6,7 @@
  * VITE_WEB3FORMS_ACCESS_KEY. Web3Forms access keys are designed to ship in
  * frontend bundles; do not put SMTP passwords or other private secrets here.
  */
-import { WEB3FORMS_ACCESS_KEY, WEB3FORMS_SUBMIT_URL, submitContactPayload } from "@mex/hub-contracts/setup";
+import { WEB3FORMS_ACCESS_KEY, WEB3FORMS_SUBMIT_URL, submitContactPayload } from "@mex/hub-contracts/contact";
 export { WEB3FORMS_ACCESS_KEY, WEB3FORMS_SUBMIT_URL };
 export {
   TEAM_ACCESS_STORAGE_KEY,

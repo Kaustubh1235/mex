@@ -87,7 +87,7 @@ export function SetupCompletion({ api, agentMemory, pending, onOpen }: {
       <p>Explore your project memory in the Hub.</p>
       <Button type="button" disabled={pending || installing || send.isPending || skip.isPending} onClick={async () => {
         if (contact.data?.status === "unasked" && api.rememberContactPreference) {
-          try { await skip.mutateAsync(); } catch { /* An optional preference cannot block the Hub. */ }
+          try { await skip.mutateAsync(); } catch { /* Preference persistence is optional. */ }
         }
         onOpen();
       }}>{pending ? "Opening…" : "Open Hub"}<ArrowRight aria-hidden="true" /></Button>

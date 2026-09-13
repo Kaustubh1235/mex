@@ -149,7 +149,11 @@ export function measureSetupAssets(outputRoot) {
 
 function measureManifestSetupAssets(root, manifest, initialFiles) {
   const setupKeys = Object.entries(manifest)
-    .filter(([key, record]) => ["src/pages/SetupPage.tsx", "../hub-contracts/dist/setup.js"].includes(record.src ?? key))
+    .filter(([key, record]) => [
+      "src/pages/SetupPage.tsx", "../hub-contracts/dist/setup.js",
+      // The optional completion form loads this shared contract on demand.
+      "../hub-contracts/dist/contact.js",
+    ].includes(record.src ?? key))
     .map(([key]) => key);
   const setupFiles = filesForKeys(manifest, manifestClosure(manifest, setupKeys, false));
   for (const file of initialFiles) setupFiles.delete(file);

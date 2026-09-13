@@ -41,6 +41,10 @@ Then read this file fully before doing anything else in this session.
   preference. Agent failures retain the actual manual population prompt and
   integration pointer notes are advisory. The existing tour still starts only
   in the full Hub. Fresh-project interview changes remain deferred.
+  The PR #197 performance fix isolates shared contact contracts from setup and
+  keeps setup limits independent of the full Hub schema barrel. All setup-stage
+  assets, including the contact module, are measured; shared/runtime limits stay
+  frozen. The release plan records the deterministic calibration and CI evidence.
   This is branch implementation, not a published release; verification
   and outstanding release gates are in `docs/design/0.8.2-release-plan.md`.
 - Incomplete checkouts open a Hub setup wizard from `mex`, `mex setup`, or `mex hub` instead of the

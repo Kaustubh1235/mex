@@ -1,42 +1,47 @@
 {
   "schemaVersion": 1,
-  "description": "Incremental lazy setup wizard and private schema assets; operational route and runtime budgets stay separate.",
+  "description": "Incremental lazy setup wizard, completion guide, and private setup/contact schema assets; operational route and runtime budgets stay separate.",
   "formula": "ceil(built bytes * 1.05)",
   "measured": {
-    "jsBytes": 102521,
-    "cssBytes": 20077,
+    "jsBytes": 71143,
+    "cssBytes": 22553,
     "fontBytes": 0
   },
   "limits": {
-    "jsBytes": 107648,
-    "cssBytes": 21081,
+    "jsBytes": 74701,
+    "cssBytes": 23681,
     "fontBytes": 0
   },
   "files": [
     {
-      "file": "assets/SetupPage-C6QwVnQy.js",
-      "bytes": 42108,
-      "sha256": "16f36aa500ae9477f9479b6d7520136d809921b2636b4870ef603179c33f1a40"
+      "file": "assets/SetupPage-B7yTTM53.js",
+      "bytes": 49879,
+      "sha256": "76b71ab4cace3020d537d86fdf0bcdcbe6a38013b39cf16f497c4befe273c4bc"
     },
     {
-      "file": "assets/SetupPage-D_pyTyiK.css",
-      "bytes": 20077,
-      "sha256": "52606832da4a24be1c9e4ea48284c2226f76f6f09a14913f570bf6b97d6e436c"
+      "file": "assets/SetupPage-DCvNIsEC.css",
+      "bytes": 22553,
+      "sha256": "b7b6c3ecea8bb9b834187efeb70a882dec9bd1b531d32bdb93e291617a3a0104"
     },
     {
-      "file": "assets/book-open-text-Dus_QarN.js",
+      "file": "assets/arrow-right-Cn8OvdXQ.js",
+      "bytes": 334,
+      "sha256": "7b2bae956f4ad303088ac229ecf87997008efce817f85426ad86db6dd645ef60"
+    },
+    {
+      "file": "assets/book-open-text-C1XJkXja.js",
       "bytes": 596,
-      "sha256": "c3327580bf168a46e362165e2b53b08e4ee089156fc7250f37c56b3b52f54630"
+      "sha256": "2086916ae12e3088aee0e16ae4f1eab8d45fc7f418a750830c68320fceb8b6e9"
     },
     {
-      "file": "assets/braces-DeuOGm_m.js",
+      "file": "assets/braces-DzbEZuGu.js",
       "bytes": 449,
-      "sha256": "046778a5a4289f55474ca395dce03abe3db1454664fcf6bf7d92273dd333ec9a"
+      "sha256": "126811a2939bbd90d7d8c64fb34dd0fcab4c093cf9a3c6c637b40f2a2bbd061a"
     },
     {
-      "file": "assets/check-Dg_b4uN7.js",
+      "file": "assets/check-DBr9MHJh.js",
       "bytes": 289,
-      "sha256": "d91e50ec38627f387bf6ecafb7212edf982e3c7b4f5dc971c10ff818d2b5d925"
+      "sha256": "e3d6c2f8fb5180c54eef6ed37747118816c6add4c36aef5ab74d5ecc70a55308"
     },
     {
       "file": "assets/clamp-DyuOe9kr.js",
@@ -44,29 +49,49 @@
       "sha256": "8b61017abae6ee9cdcbcdab890dd8a7e20212f112557a3a012261d06dc795497"
     },
     {
-      "file": "assets/progress-CpwZqyy6.js",
+      "file": "assets/contact-CQYw77Gd.js",
+      "bytes": 1733,
+      "sha256": "116b0514f2b74af6697f6490ec9945375d69d8f1074da11dd61189e4cb8cadd9"
+    },
+    {
+      "file": "assets/createBaseUIEventDetails-jVDY-yyS.js",
+      "bytes": 826,
+      "sha256": "e5ed0c38824e9c6fe3ac36e043452b338e8c9b2d96697938de5d4c693277f8cd"
+    },
+    {
+      "file": "assets/input-BnviTqTW.js",
+      "bytes": 4447,
+      "sha256": "e96b533ba9a2a7d9500152d32930f49631b8520491f896cc14fbecfc1e3e5e6f"
+    },
+    {
+      "file": "assets/mail-CN4xLFFc.js",
+      "bytes": 385,
+      "sha256": "db8e7753f418caeee0633902c846468bd7cb13520d5807220b8c20e443f92802"
+    },
+    {
+      "file": "assets/progress-uoUnnl68.js",
       "bytes": 3419,
-      "sha256": "4d85fe0917db1be28b93e411369609b1547f4584bcee8435c9886970e53b44a3"
+      "sha256": "c8454475d8f5455b077a45e7cff299bcbe6d7b3ef0ab1c813d93cec7e1be0b5d"
     },
     {
-      "file": "assets/setup-joZ5EotI.js",
-      "bytes": 52035,
-      "sha256": "5fcf830894879731962998d031ecaf67ac5285e77dca6564c7f31cfcd4a12a89"
+      "file": "assets/setup-BaK0kl65.js",
+      "bytes": 6988,
+      "sha256": "88b17fb83242e1e9ca4a4d75fc0ce1e44b73b47a960411a22e335eda7f9ea37b"
     },
     {
-      "file": "assets/textarea-DEq22l4F.js",
+      "file": "assets/shadowDom-EtD5FX5S.js",
+      "bytes": 476,
+      "sha256": "ddfd2568cd6e305a4f16a1d9a9b5d5233fa3279a4500ac79f7555978dad1f1f2"
+    },
+    {
+      "file": "assets/textarea-Bp13Ub2X.js",
       "bytes": 701,
-      "sha256": "10a79275c39093c4415081c5d968a7ad33a9ec1760137983d4f1a98e5da6ca1c"
+      "sha256": "cac4cd7fe38484b520672ea7728251460750d286737ea4ebb1f3acabe40f0caa"
     },
     {
-      "file": "assets/useBaseUiId-CCDt6w2r.js",
+      "file": "assets/useBaseUiId-DxG5Ja0q.js",
       "bytes": 335,
-      "sha256": "009be02cb42832809d22991e0049fd8ecbd990c01c409aa08f4f3f54942c6341"
-    },
-    {
-      "file": "assets/useMutation-DQfbC4y9.js",
-      "bytes": 2303,
-      "sha256": "6ce0993bccdaf8c1f070ea85bed92043973edba787fff771873c8b1d5fe01000"
+      "sha256": "8f8c8e38b35cc30fe09fcb4c0556efc2bfd417434ca01facceea914fdfe1b6cd"
     },
     {
       "file": "assets/visuallyHidden-Dzv0phuz.js",

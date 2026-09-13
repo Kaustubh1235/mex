@@ -47,6 +47,8 @@ import type {
   ContactPreferenceRequest,
   SetupContactRequest,
   SetupContactResponse,
+} from "@mex/hub-contracts/contact";
+import type {
   SetupInstallation,
   SetupRun,
   SetupStartRequest,
@@ -349,6 +351,7 @@ function assertSafeInboxProposalId(value: string): string {
 
 const loadRelayClient = () => import("./relay-client");
 const loadOverviewContract = () => import("@mex/hub-contracts/overview");
+const loadContactContract = () => import("@mex/hub-contracts/contact");
 const loadSetupContract = () => import("@mex/hub-contracts/setup");
 
 export function readBootstrapToken(hash = window.location.hash): string | null {
@@ -786,16 +789,16 @@ export class HttpHubApi implements HubApi {
   }
 
   getContactPreference(): Promise<ContactPreference> {
-    return this.#requestWhenOk("/contact", async () => (await loadSetupContract()).ContactPreferenceSchema);
+    return this.#requestWhenOk("/contact", async () => (await loadContactContract()).ContactPreferenceSchema);
   }
 
   rememberContactPreference(request: ContactPreferenceRequest): Promise<ContactPreference> {
-    return this.#requestWhenOk("/contact/preference", async () => (await loadSetupContract()).ContactPreferenceSchema,
+    return this.#requestWhenOk("/contact/preference", async () => (await loadContactContract()).ContactPreferenceSchema,
       { method: "POST", body: JSON.stringify(request) }, true);
   }
 
   submitSetupContact(request: SetupContactRequest): Promise<SetupContactResponse> {
-    return this.#requestWhenOk("/contact", async () => (await loadSetupContract()).SetupContactResponseSchema,
+    return this.#requestWhenOk("/contact", async () => (await loadContactContract()).SetupContactResponseSchema,
       { method: "POST", body: JSON.stringify(request) }, true);
   }
 

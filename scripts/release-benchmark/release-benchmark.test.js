@@ -687,7 +687,7 @@ describe("release benchmark contract", () => {
     const calibration = JSON.parse(readFileSync(new URL("./setup-asset-budget.json", import.meta.url), "utf8"));
     expect(calibration.schemaVersion).toBe(1);
     expect(calibration.formula).toBe("ceil(built bytes * 1.05)");
-    expect(calibration.limits).toEqual({ jsBytes: 107648, cssBytes: 21081, fontBytes: 0 });
+    expect(calibration.limits).toEqual({ jsBytes: 74701, cssBytes: 23681, fontBytes: 0 });
     for (const [field, extension] of [["jsBytes", ".js"], ["cssBytes", ".css"], ["fontBytes", ".woff2"]]) {
       expect(calibration.files.filter(({ file }) => file.endsWith(extension)).reduce((total, { bytes }) => total + bytes, 0))
         .toBe(calibration.measured[field]);
@@ -720,6 +720,9 @@ describe("release benchmark contract", () => {
         "../hub-contracts/dist/setup.js": {
           file: "assets/setup.js", src: "../hub-contracts/dist/setup.js", isDynamicEntry: true,
         },
+        "../hub-contracts/dist/contact.js": {
+          file: "assets/contact.js", src: "../hub-contracts/dist/contact.js", isDynamicEntry: true,
+        },
       };
       for (const page of pages) {
         manifest[page] = {
@@ -748,7 +751,7 @@ describe("release benchmark contract", () => {
       expect(measurement.routes.home.files.map(({ file }) => file)).toEqual(["assets/HomePage.js"]);
       expect(measurement.routes.settings.files.map(({ file }) => file)).toEqual(["assets/SettingsPage.js"]);
       expect(measureSetupAssets(output).files.map(({ file }) => file)).toEqual([
-        "assets/SetupPage.js", "assets/setup.js",
+        "assets/SetupPage.js", "assets/contact.js", "assets/setup.js",
       ]);
       const setupPage = join(output, "assets/SetupPage.js");
       const originalSetup = readFileSync(setupPage, "utf8");
@@ -758,6 +761,13 @@ describe("release benchmark contract", () => {
         expect.objectContaining({ metric: "assets.setup.jsBytes", reason: "budget_exceeded" }),
       ]);
       writeFileSync(setupPage, originalSetup);
+      const contactContract = join(output, "assets/contact.js");
+      const originalContact = readFileSync(contactContract, "utf8");
+      writeFileSync(contactContract, "x".repeat(setupLimit + 1));
+      expect(measureBuiltAssets(output, budgets.assets).violations).toEqual([
+        expect.objectContaining({ metric: "assets.setup.jsBytes", reason: "budget_exceeded" }),
+      ]);
+      writeFileSync(contactContract, originalContact);
 
       manifest.HomePage.imports = ["SettingsPage"];
       writeFileSync(join(output, ".vite", "manifest.json"), JSON.stringify(manifest));

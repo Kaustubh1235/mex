@@ -2444,6 +2444,8 @@ test.describe("built production Hub", () => {
     const productionOrigin = new URL(bootstrapUrl).origin;
     const crossOriginRequests: string[] = [];
     const teamAccessDialogRequests: string[] = [];
+    const setupAssetRequests: string[] = [];
+    const contactAssetRequests: string[] = [];
     const idleApiRequests: string[] = [];
     const relayDraftRequests: string[] = [];
     const relayWorkstreamRequests: string[] = [];
@@ -2452,6 +2454,8 @@ test.describe("built production Hub", () => {
       const url = new URL(request.url());
       if (url.origin !== productionOrigin) crossOriginRequests.push(request.url());
       if (/\/TeamAccessDialog-[^/]+\.js$/u.test(url.pathname)) teamAccessDialogRequests.push(request.url());
+      if (/\/(?:SetupPage|setup)-[^/]+\.js$/u.test(url.pathname)) setupAssetRequests.push(request.url());
+      if (/\/contact-[^/]+\.js$/u.test(url.pathname)) contactAssetRequests.push(request.url());
       if (url.origin === productionOrigin && url.pathname === "/api/v1/relays/drafts") {
         relayDraftRequests.push(request.url());
       }
@@ -2465,6 +2469,8 @@ test.describe("built production Hub", () => {
     const response = await page.goto(bootstrapUrl);
     await expect(page.locator('[data-overview-workbench="ready"]')).toBeVisible();
     await expect.poll(() => page.url()).not.toContain("#token=");
+    await expect.poll(() => contactAssetRequests.length).toBe(1);
+    expect(setupAssetRequests).toEqual([]);
     expect(teamAccessDialogRequests).toEqual([]);
     const requestAccess = page.getByRole("button", { name: "Request access", exact: true });
     await requestAccess.click();
