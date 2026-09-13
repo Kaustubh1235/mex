@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { HUB_LIMITS } from "./limits.js";
+export { HUB_LIMITS } from "./limits.js";
 import {
   GraphSymbolIdSchema,
   InboxProposalIdSchema,
@@ -16,19 +18,6 @@ export {
 } from "./ids.js";
 
 export const HUB_API_VERSION = "v1" as const;
-
-export const HUB_LIMITS = {
-  maxMutationBodyBytes: 64 * 1024,
-  maxQueryCharacters: 256,
-  maxCursorBytes: 4 * 1024,
-  maxQueryStringBytes: 16 * 1024,
-  defaultPageSize: 25,
-  maxPageSize: 100,
-  maxSearchGroupSize: 50,
-  maxJsonResponseBytes: 1024 * 1024,
-  maxIdentifierCharacters: 128,
-  maxDiagnosticCount: 50,
-} as const;
 
 export const HUB_PROBLEM_CODES = [
   "NOT_FOUND",
