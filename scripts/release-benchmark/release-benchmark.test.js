@@ -57,8 +57,19 @@ const PRE_GRAPH_TIMING_LIMITS = {
   large: { graph_rebuild: 1229 },
 };
 
-function beforeGraphTimingCalibration(value) {
+const PRE_SETTINGS_ROUTE_JS_BYTES = 8035;
+
+// Restores the Settings route JS limit that PR #195 recalibrated, so every
+// earlier frozen-budget guard keeps hashing its original state.
+function beforeSettingsRouteJsCalibration(value) {
   const projected = structuredClone(value);
+  projected.calibration.status = "pinned-A-G-Settings-34286120355-Graph-timing-34288560611";
+  projected.assets.routes.settings.jsBytes = PRE_SETTINGS_ROUTE_JS_BYTES;
+  return projected;
+}
+
+function beforeGraphTimingCalibration(value) {
+  const projected = beforeSettingsRouteJsCalibration(value);
   projected.calibration.status = "pinned-checkpoints-A-G-and-Settings-34286120355";
   for (const [profile, operations] of Object.entries(PRE_GRAPH_TIMING_LIMITS)) {
     Object.assign(projected.runtime.maintenanceMs[profile], operations);
@@ -135,7 +146,7 @@ describe("release benchmark contract", () => {
     // Settings assets use the deterministic build; heap limits come from the
     // retained pinned Linux report, with every unrelated limit still frozen.
     expect(Object.keys(budgets.assets.routes)).toEqual(RELEASE_ROUTE_KEYS);
-    expect(budgets.assets.routes.settings).toEqual({ jsBytes: 8035, cssBytes: 2910, fontBytes: 0 });
+    expect(budgets.assets.routes.settings).toEqual({ jsBytes: 8978, cssBytes: 2910, fontBytes: 0 });
     expect(Object.keys(releaseWorkbenchPaths({
       knowledgeEntityId: "mx_knowledge",
       specEntityId: "mx_spec",
@@ -209,7 +220,7 @@ describe("release benchmark contract", () => {
     }
     expect(budgets.provisional).toBe(false);
     expect(budgets.calibration).toEqual({
-      status: "pinned-A-G-Settings-34286120355-Graph-timing-34288560611",
+      status: "pinned-A-G-Settings-34286120355-Graph-timing-34288560611-Settings-JS-34739467180",
       runtimeFormula: "ceil(measured p95 * 1.15)",
       assetFormula: "ceil(built bytes * 1.05)",
     });
@@ -330,6 +341,22 @@ describe("release benchmark contract", () => {
       expect(budgets.runtime.browserHeapBytes[profile].settings).toBe(measured.budgetBytes);
       delete beforeSettings.runtime.browserHeapBytes[profile].settings;
     }
+    expect(createHash("sha256").update(JSON.stringify(beforeSettings)).digest("hex"))
+      .toBe(evidence.unownedBudgetSha256);
+  });
+
+  it("pins Settings route JS to the retained runner build without changing existing budgets", () => {
+    const evidence = JSON.parse(readFileSync(new URL("../../docs/design/settings-route-js-calibration.json", import.meta.url), "utf8"));
+    expect(evidence.environment).toEqual({ ...budgets.environment, pinnedBudgetEnvironment: true });
+    expect(evidence.formula).toBe(budgets.calibration.assetFormula);
+    expect(evidence.metric).toBe("assets.routes.settings.jsBytes");
+    expect(evidence.previousBudgetBytes).toBe(PRE_SETTINGS_ROUTE_JS_BYTES);
+    expect(evidence.files.reduce((total, file) => total + file.bytes, 0)).toBe(evidence.measuredBytes);
+    expect(assetBudgetCandidate(evidence.measuredBytes)).toBe(evidence.budgetBytes);
+    expect(budgets.assets.routes.settings.jsBytes).toBe(evidence.budgetBytes);
+    const beforeSettings = structuredClone(budgets);
+    beforeSettings.calibration.status = evidence.previousCalibrationStatus;
+    delete beforeSettings.assets.routes.settings.jsBytes;
     expect(createHash("sha256").update(JSON.stringify(beforeSettings)).digest("hex"))
       .toBe(evidence.unownedBudgetSha256);
   });
@@ -660,7 +687,7 @@ describe("release benchmark contract", () => {
     const calibration = JSON.parse(readFileSync(new URL("./setup-asset-budget.json", import.meta.url), "utf8"));
     expect(calibration.schemaVersion).toBe(1);
     expect(calibration.formula).toBe("ceil(built bytes * 1.05)");
-    expect(calibration.limits).toEqual({ jsBytes: 107648, cssBytes: 21081, fontBytes: 0 });
+    expect(calibration.limits).toEqual({ jsBytes: 74701, cssBytes: 23681, fontBytes: 0 });
     for (const [field, extension] of [["jsBytes", ".js"], ["cssBytes", ".css"], ["fontBytes", ".woff2"]]) {
       expect(calibration.files.filter(({ file }) => file.endsWith(extension)).reduce((total, { bytes }) => total + bytes, 0))
         .toBe(calibration.measured[field]);
@@ -693,6 +720,9 @@ describe("release benchmark contract", () => {
         "../hub-contracts/dist/setup.js": {
           file: "assets/setup.js", src: "../hub-contracts/dist/setup.js", isDynamicEntry: true,
         },
+        "../hub-contracts/dist/contact.js": {
+          file: "assets/contact.js", src: "../hub-contracts/dist/contact.js", isDynamicEntry: true,
+        },
       };
       for (const page of pages) {
         manifest[page] = {
@@ -721,7 +751,7 @@ describe("release benchmark contract", () => {
       expect(measurement.routes.home.files.map(({ file }) => file)).toEqual(["assets/HomePage.js"]);
       expect(measurement.routes.settings.files.map(({ file }) => file)).toEqual(["assets/SettingsPage.js"]);
       expect(measureSetupAssets(output).files.map(({ file }) => file)).toEqual([
-        "assets/SetupPage.js", "assets/setup.js",
+        "assets/SetupPage.js", "assets/contact.js", "assets/setup.js",
       ]);
       const setupPage = join(output, "assets/SetupPage.js");
       const originalSetup = readFileSync(setupPage, "utf8");
@@ -731,6 +761,13 @@ describe("release benchmark contract", () => {
         expect.objectContaining({ metric: "assets.setup.jsBytes", reason: "budget_exceeded" }),
       ]);
       writeFileSync(setupPage, originalSetup);
+      const contactContract = join(output, "assets/contact.js");
+      const originalContact = readFileSync(contactContract, "utf8");
+      writeFileSync(contactContract, "x".repeat(setupLimit + 1));
+      expect(measureBuiltAssets(output, budgets.assets).violations).toEqual([
+        expect.objectContaining({ metric: "assets.setup.jsBytes", reason: "budget_exceeded" }),
+      ]);
+      writeFileSync(contactContract, originalContact);
 
       manifest.HomePage.imports = ["SettingsPage"];
       writeFileSync(join(output, ".vite", "manifest.json"), JSON.stringify(manifest));

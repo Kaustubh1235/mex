@@ -1,5 +1,6 @@
 import {
   AgentLoggingPolicySchema,
+  HubOnboardingStateSchema,
   ActivityResponseSchema,
   BootstrapResponseSchema,
   CodeKnowledgeResponseSchema,
@@ -42,6 +43,13 @@ import {
 } from "@mex/hub-contracts";
 import { createFixtureApi } from "virtual:mex-hub-fixture-api";
 import type {
+  ContactPreference,
+  ContactPreferenceRequest,
+  SetupContactRequest,
+  SetupContactResponse,
+} from "@mex/hub-contracts/contact";
+import type {
+  SetupInstallation,
   SetupRun,
   SetupStartRequest,
   SetupStatus,
@@ -55,6 +63,7 @@ import type {
 import type {
   AgentLoggingPolicy,
   AgentLoggingUpdateRequest,
+  HubOnboardingState,
   ActivityRequest,
   ActivityResponse,
   BootstrapResponse,
@@ -179,12 +188,20 @@ export interface FixtureApiOptions {
   activityFixture?: ActivityFixtureVariant;
   memberFixture?: MemberFixtureVariant;
   overviewFixture?: OverviewFixtureVariant;
+  onboardingFixture?: "completed" | "first-run";
 }
 
 export interface HubApi {
+  getContactPreference?(): Promise<ContactPreference>;
+  rememberContactPreference?(request: ContactPreferenceRequest): Promise<ContactPreference>;
+  submitSetupContact?(request: SetupContactRequest): Promise<SetupContactResponse>;
+  getSetupInstallation?(): Promise<SetupInstallation>;
+  installSetupGlobally?(): Promise<SetupInstallation>;
   recordPageView?(page: HubTelemetryPage): Promise<void>;
   getLoggingPolicy(): Promise<AgentLoggingPolicy>;
   setLoggingPolicy(request: AgentLoggingUpdateRequest): Promise<AgentLoggingPolicy>;
+  getOnboardingState(): Promise<HubOnboardingState>;
+  completeOnboarding(): Promise<HubOnboardingState>;
   bootstrap(token: string): Promise<BootstrapResponse>;
   getSession(): Promise<SessionResponse>;
   getCapabilities(): Promise<CapabilitiesResponse>;
@@ -334,6 +351,7 @@ function assertSafeInboxProposalId(value: string): string {
 
 const loadRelayClient = () => import("./relay-client");
 const loadOverviewContract = () => import("@mex/hub-contracts/overview");
+const loadContactContract = () => import("@mex/hub-contracts/contact");
 const loadSetupContract = () => import("@mex/hub-contracts/setup");
 
 export function readBootstrapToken(hash = window.location.hash): string | null {
@@ -696,6 +714,15 @@ export class HttpHubApi implements HubApi {
       { method: "POST", body: JSON.stringify(request) }, true);
   }
 
+  getOnboardingState(): Promise<HubOnboardingState> {
+    return this.#request("/settings/onboarding", HubOnboardingStateSchema);
+  }
+
+  completeOnboarding(): Promise<HubOnboardingState> {
+    return this.#request("/settings/onboarding", HubOnboardingStateSchema,
+      { method: "POST", body: JSON.stringify({ completed: true }) }, true);
+  }
+
   getJobs(cursor?: string): Promise<JobsResponse> {
     const params = new URLSearchParams({ limit: "25" });
     if (cursor) params.set("cursor", cursor.slice(0, 4096));
@@ -759,6 +786,29 @@ export class HttpHubApi implements HubApi {
 
   getSetupStatus(): Promise<SetupStatus> {
     return this.#requestWhenOk("/setup", async () => (await loadSetupContract()).SetupStatusSchema);
+  }
+
+  getContactPreference(): Promise<ContactPreference> {
+    return this.#requestWhenOk("/contact", async () => (await loadContactContract()).ContactPreferenceSchema);
+  }
+
+  rememberContactPreference(request: ContactPreferenceRequest): Promise<ContactPreference> {
+    return this.#requestWhenOk("/contact/preference", async () => (await loadContactContract()).ContactPreferenceSchema,
+      { method: "POST", body: JSON.stringify(request) }, true);
+  }
+
+  submitSetupContact(request: SetupContactRequest): Promise<SetupContactResponse> {
+    return this.#requestWhenOk("/contact", async () => (await loadContactContract()).SetupContactResponseSchema,
+      { method: "POST", body: JSON.stringify(request) }, true);
+  }
+
+  getSetupInstallation(): Promise<SetupInstallation> {
+    return this.#requestWhenOk("/setup/installation", async () => (await loadSetupContract()).SetupInstallationSchema);
+  }
+
+  installSetupGlobally(): Promise<SetupInstallation> {
+    return this.#requestWhenOk("/setup/installation", async () => (await loadSetupContract()).SetupInstallationSchema,
+      { method: "POST", body: "{}" }, true);
   }
 
   getSetupRun(): Promise<SetupRun> {
