@@ -77,16 +77,34 @@ describe("Flask framework resolver", () => {
       "app = Flask(__name__)",
       "if os.environ.get('DEBUG'):",
       "    @app.route('/debug')",
-      "    def debug_on():",
+      "    def debug():",
       "        return 'on'",
       "else:",
       "    @app.route('/debug')",
-      "    def debug_off():",
+      "    def debug():",
       "        return 'off'",
       "",
     ].join("\n");
     const result = flaskResolver.extract!("src/conditional.py", custom);
     expect(result.nodes.map((node) => node.name)).toEqual(["GET /debug", "GET /debug"]);
+    expect(new Set(result.nodes.map((node) => node.id)).size).toBe(2);
+  });
+
+  it("keeps same-named views on different Blueprints distinct (#177 review)", () => {
+    const custom = [
+      "from flask import Blueprint",
+      "v1 = Blueprint('v1', __name__)",
+      "v2 = Blueprint('v2', __name__)",
+      "@v1.route('/')",
+      "def index():",
+      "    return 'v1'",
+      "@v2.route('/')",
+      "def index():",
+      "    return 'v2'",
+      "",
+    ].join("\n");
+    const result = flaskResolver.extract!("src/versions.py", custom);
+    expect(result.nodes.map((node) => node.name)).toEqual(["GET /", "GET /"]);
     expect(new Set(result.nodes.map((node) => node.id)).size).toBe(2);
   });
 

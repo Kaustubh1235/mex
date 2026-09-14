@@ -54,6 +54,11 @@ export const flaskResolver: FrameworkResolver = {
     const nodes: GraphNode[] = [];
     const references: UnresolvedRef[] = [];
     const pendingRoutes: PendingRoute[] = [];
+    // Route ordinals count per FILE, not per handler: two handlers with the
+    // same route and function name (an if/else or try/except redefinition,
+    // or `index` on two Blueprints) would otherwise share an id and fail the
+    // whole build. Express keys its ordinal the same way.
+    const occurrences = new Map<string, number>();
 
     // Blank `#` comments and triple-quoted strings (docstrings) with spaces
     // before scanning: a decorator shown inside a docstring example is
@@ -109,7 +114,7 @@ export const flaskResolver: FrameworkResolver = {
 
       const handler = HANDLER.exec(line);
       if (handler) {
-        emitRoutes(filePath, handler[1]!, pendingRoutes, nodes, references);
+        emitRoutes(filePath, handler[1]!, pendingRoutes, nodes, references, occurrences);
       }
       pendingRoutes.length = 0;
     }
@@ -306,8 +311,8 @@ function emitRoutes(
   routes: PendingRoute[],
   nodes: GraphNode[],
   references: UnresolvedRef[],
+  occurrences: Map<string, number>,
 ): void {
-  const occurrences = new Map<string, number>();
   for (const route of routes) {
     const name = `${route.method} ${route.path}`;
     const signature = `${name} -> ${handler}`;
