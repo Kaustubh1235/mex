@@ -1,5 +1,14 @@
 import { z } from "zod";
-import { HUB_LIMITS } from "./index.js";
+import { HUB_LIMITS } from "./limits.js";
+export * from "./contact.js";
+
+export const SetupInstallationSchema = z.object({
+  state: z.enum(["idle", "running", "succeeded", "failed"]),
+  version: z.string().min(1).max(64),
+  command: z.string().min(1).max(160),
+  message: z.string().min(1).max(512),
+}).strict();
+export type SetupInstallation = z.infer<typeof SetupInstallationSchema>;
 
 const isoTimestamp = z.string().datetime({ offset: true });
 const boundedReason = z.string().min(1).max(512);
@@ -58,6 +67,7 @@ export const SetupStartRequestSchema = z.object({
   mode: SetupModeSchema.default("code-repo"),
   tools: z.array(aiTool).max(8).default([]),
   confirmPopulation: z.boolean().optional(),
+  openHub: z.boolean().optional(),
 }).strict();
 
 export const SetupCancelRequestSchema = z.object({}).strict();
