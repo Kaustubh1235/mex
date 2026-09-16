@@ -78,11 +78,11 @@ export function checkHeartbeat(
     .map((file) => {
       const fm = parseFrontmatter(file);
       scanned++;
-      if (typeof fm?.last_updated === "string") withLastUpdated++;
       const days = daysSinceFrontmatterDate(
         typeof fm?.last_updated === "string" ? fm.last_updated : undefined,
         now,
       );
+      if (days !== null) withLastUpdated++;
       return days !== null && days > staleDays
         ? { file: toPosix(relative(config.scaffoldRoot, file)), days }
         : null;
@@ -172,7 +172,7 @@ function printHeartbeat(result: HeartbeatResult, config: MexConfig): void {
       console.log("HEARTBEAT_OK");
       console.log();
       console.log(
-        chalk.dim(`No scaffold files include last_updated; staleness checks are currently skipped. `
+        chalk.dim(`No scaffold files include a parseable last_updated; staleness checks are currently skipped. `
           + `Add last_updated: YYYY-MM-DD to frontmatter to opt files in.`),
       );
       return;
@@ -185,7 +185,7 @@ function printHeartbeat(result: HeartbeatResult, config: MexConfig): void {
   if (result.filesWithoutLastUpdated) {
     console.log();
     console.log(
-      chalk.dim(`No scaffold files include last_updated; staleness checks are currently skipped. `
+      chalk.dim(`No scaffold files include a parseable last_updated; staleness checks are currently skipped. `
         + `Add last_updated: YYYY-MM-DD to frontmatter to opt files in.`),
     );
   }

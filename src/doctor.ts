@@ -30,7 +30,7 @@ export async function runDoctor(config: MexConfig): Promise<void> {
   printLine("Graph", graph.status === "fresh", graphStatusDetail(graph));
   printLine("Heartbeat", heartbeat.ok, heartbeat.ok
     ? (heartbeat.filesWithoutLastUpdated
-      ? "HEARTBEAT_OK (staleness checks inactive: no last_updated fields)"
+      ? "HEARTBEAT_OK (staleness checks inactive: no parseable last_updated dates)"
       : "HEARTBEAT_OK")
     : `${heartbeat.staleFiles.length} stale files, ${heartbeat.oldDailyMemoryFiles.length} old memory files`);
   printLine("Events", true, `${events.length} logged event${events.length === 1 ? "" : "s"}`);

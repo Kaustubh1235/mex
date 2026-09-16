@@ -431,14 +431,6 @@ export function findScaffoldFiles(
       follow: true,
       ignore: ["node_modules/**"],
     })) {
-      let real: string;
-      try {
-        real = realpathSync(match);
-      } catch {
-        real = match;
-      }
-      if (seenReal.has(real)) continue;
-      seenReal.add(real);
       files.push(match);
     }
   }
@@ -455,8 +447,17 @@ export function findScaffoldFiles(
     }
   }
 
-  // Deduplicate
-  return [...new Set(files)];
+  return files.filter((file) => {
+    let real: string;
+    try {
+      real = realpathSync(file);
+    } catch {
+      real = file;
+    }
+    if (seenReal.has(real)) return false;
+    seenReal.add(real);
+    return true;
+  });
 }
 
 export function buildVerboseLog(

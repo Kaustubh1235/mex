@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { checkHeartbeat } from "../src/heartbeat.js";
@@ -55,6 +55,14 @@ describe("heartbeat", () => {
     expect(result.filesWithoutLastUpdated).toBe(1);
   });
 
+  it.each(["", "not-a-date", "[YYYY-MM-DD]"])("reports inactive staleness for invalid last_updated %j", (value) => {
+    writeFileSync(join(tmpDir, ".mex/ROUTER.md"), frontmatter("router", JSON.stringify(value)));
+    const result = checkHeartbeat(config, new Date("2026-05-14T00:00:00Z"));
+    expect(result.ok).toBe(true);
+    expect(result.staleFiles).toEqual([]);
+    expect(result.filesWithoutLastUpdated).toBe(1);
+  });
+
   it("omits filesWithoutLastUpdated once any file opts in", () => {
     writeFileSync(join(tmpDir, ".mex/context/architecture.md"), "---\nname: architecture\n---\n\nno date here\n");
     const result = checkHeartbeat(config, new Date("2026-05-14T00:00:00Z"));
@@ -106,27 +114,28 @@ describe("zero-day heartbeat thresholds (#42)", () => {
 });
 
 describe("symlinked scaffold files (#40)", () => {
-  it("counts a file reached through two glob paths exactly once", () => {
+  it("counts a file reached through two glob paths exactly once", (ctx) => {
     const root = mkdtempSync(join(tmpdir(), "mex-heartbeat-symlink-"));
     try {
       mkdirSync(join(root, ".mex/context"), { recursive: true });
-      mkdirSync(join(root, ".mex/extra"), { recursive: true });
+      mkdirSync(join(root, ".mex/patterns"), { recursive: true });
       const real = join(root, ".mex/context/architecture.md");
       writeFileSync(real, frontmatter("architecture", "2026-05-01"));
-      // Same content reachable through a second pattern's directory.
-      let linked = true;
       try {
-        symlinkSync(real, join(root, ".mex/extra/architecture.md"));
-      } catch {
-        linked = false; // Windows without symlink privilege: skip assert
+        symlinkSync(real, join(root, ".mex/patterns/architecture.md"));
+      } catch (error) {
+        if (process.platform === "win32" && ["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+          ctx.skip("Symlink creation requires Windows privileges");
+          return;
+        }
+        throw error;
       }
       const result = checkHeartbeat({
         projectRoot: root,
         scaffoldRoot: join(root, ".mex"),
         aiTools: [],
       }, new Date("2026-05-14T00:00:00Z"));
-      if (!linked) return;
-      expect(result.staleFiles.filter((f) => f.file.endsWith("architecture.md"))).toHaveLength(1);
+      expect(result.staleFiles).toEqual([{ file: "context/architecture.md", days: 13 }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
