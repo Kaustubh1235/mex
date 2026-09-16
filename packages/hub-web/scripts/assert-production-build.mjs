@@ -98,6 +98,13 @@ if (!setupRuntimeKey || !manifest[setupRuntimeKey].isDynamicEntry) {
 if (initialChunks.has(setupRuntimeKey) || homeChunks.has(setupRuntimeKey)) {
   throw new Error("The Setup contract leaked into the application shell or Home workbench.");
 }
+const contactRuntimeKey = Object.keys(manifest).find((candidate) => (
+  (manifest[candidate].src ?? candidate) === "../hub-contracts/dist/contact.js"
+));
+if (!contactRuntimeKey || !manifest[contactRuntimeKey].isDynamicEntry
+  || initialChunks.has(contactRuntimeKey) || staticImportClosure(contactRuntimeKey).has(setupRuntimeKey)) {
+  throw new Error("Contact preferences must load independently of setup and the initial shell.");
+}
 const relayEntry = workbenchEntries.find((entry) => entry.source === "src/pages/RelayPage.tsx");
 const relayComposerKey = Object.keys(manifest).find((candidate) => (
   candidate === "src/pages/RelayDraftComposer.tsx"

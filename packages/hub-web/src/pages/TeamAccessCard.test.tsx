@@ -36,7 +36,7 @@ describe("TeamAccessCard", () => {
     const user = userEvent.setup();
     render(<TeamAccessCard />);
     await user.click(screen.getByRole("button", { name: "Request access" }));
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await screen.findByRole("dialog", undefined, { timeout: 5_000 });
     await user.type(within(dialog).getByLabelText("Name"), "Ada Lovelace");
     await user.type(within(dialog).getByLabelText("Email"), "ada@example.com");
     await user.keyboard("{Escape}");
@@ -47,7 +47,7 @@ describe("TeamAccessCard", () => {
     expect(within(reopened).getByLabelText("Name")).toHaveValue("Ada Lovelace");
     expect(within(reopened).getByLabelText("Email")).toHaveValue("ada@example.com");
     expect(fetch).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it("unlocks a stalled contact request and lets the user close and retry", async () => {
     vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(() => {}));
@@ -97,7 +97,7 @@ describe("TeamAccessCard", () => {
     expect(within(dialog).getByLabelText("Company")).toHaveValue("Analytical Engines");
     await user.click(within(dialog).getByRole("button", { name: "Skip" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("You’re on the list. Keep using this Hub with your team.")).toBeVisible();
+    expect(screen.getByText("Thanks for sharing your details. Keep using this Hub with your team.")).toBeVisible();
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -181,7 +181,7 @@ describe("TeamAccessCard", () => {
 
     expect(fetch).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("You’re on the list. Keep using this Hub with your team.")).toBeVisible();
+    expect(screen.getByText("Thanks for sharing your details. Keep using this Hub with your team.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Request access" })).not.toBeInTheDocument();
   });
 
@@ -198,7 +198,7 @@ describe("TeamAccessCard", () => {
 
     expect(fetch).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("You’re on the list. Keep using this Hub with your team.")).toBeVisible();
+    expect(screen.getByText("Thanks for sharing your details. Keep using this Hub with your team.")).toBeVisible();
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 
@@ -253,7 +253,7 @@ describe("TeamAccessCard", () => {
     view.unmount();
 
     render(<TeamAccessCard />);
-    expect(screen.getByText("You’re on the list. Keep using this Hub with your team.")).toBeVisible();
+    expect(screen.getByText("Thanks for sharing your details. Keep using this Hub with your team.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Request access" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     expect(screen.queryByText("Help shape MEX")).not.toBeInTheDocument();

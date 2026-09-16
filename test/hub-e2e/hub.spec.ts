@@ -102,7 +102,8 @@ test.describe("populated development fixture", () => {
     await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
 
     const focus = page.getByRole("region", { name: "Attention", exact: true });
-    await expect(page.getByRole("button", { name: "Explore Context" })).toHaveAttribute("href", "/knowledge");
+    const memory = page.getByRole("region", { name: "Context", exact: true });
+    await expect(memory.getByRole("button", { name: "Open Context" })).toHaveAttribute("href", "/knowledge");
     await expect(focus.getByRole("button", { name: "View Relays" })).toHaveAttribute("href", "/relays");
     await expect(focus.getByRole("heading", { name: "Take the handoff waiting for you" })).toBeVisible();
     await expect(focus.getByRole("button", { name: "Open handoff" })).toHaveAttribute(
@@ -136,7 +137,7 @@ test.describe("populated development fixture", () => {
     await page.goto("/?fixture=populated&overviewFixture=pending-review");
     await expect(page.locator('[data-overview-workbench="ready"]')).toBeVisible();
     await expect(page.getByRole("region", { name: "Attention", exact: true }).getByRole("button", { name: "Open Inbox" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Explore Context" })).toHaveAttribute("href", "/knowledge");
+    await expect(page.getByRole("region", { name: "Context", exact: true }).getByRole("button", { name: "Open Context" })).toHaveAttribute("href", "/knowledge");
 
     await page.goto("/?fixture=populated&overviewFixture=relay-ready");
     await expect(page.locator('[data-overview-workbench="ready"]')).toBeVisible();
@@ -162,6 +163,7 @@ test.describe("populated development fixture", () => {
     await page.goto("/?fixture=populated&overviewFixture=failure");
     await expect(page.locator('[data-overview-workbench="ready"]')).toBeVisible();
     const failureFocus = page.getByRole("region", { name: "Attention", exact: true });
+    await expect(page.getByRole("region", { name: "Context", exact: true }).getByRole("button", { name: "Open Context" })).toHaveAttribute("href", "/knowledge");
     await expect(failureFocus.getByRole("heading", { name: "Review the failed Graph refresh" })).toBeVisible();
     await expect(failureFocus.getByRole("button", { name: "View operation" })).toHaveAttribute(
       "href",
@@ -175,6 +177,7 @@ test.describe("populated development fixture", () => {
     await expect(page.locator('[data-overview-workbench="ready"]')).toBeVisible();
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
     const caughtUp = page.getByRole("region", { name: "Attention", exact: true });
+    await expect(page.getByRole("region", { name: "Context", exact: true }).getByRole("button", { name: "Open Context" })).toHaveAttribute("href", "/knowledge");
     await expect(caughtUp.getByText("You’re caught up", { exact: true })).toBeVisible();
     await expect(caughtUp.getByRole("button", { name: "Browse shared knowledge" })).toHaveAttribute("href", "/knowledge");
     await expect(page.getByRole("region", { name: "Active operation" })).toHaveCount(0);
@@ -2392,6 +2395,13 @@ test.describe("built production Hub", () => {
       const result = spawnSync(command, args, { cwd: projectRoot, encoding: "utf8" });
       if (result.status !== 0) throw new Error(result.stderr);
     }
+    // Browse as a returning checkout; the first-run tour would otherwise
+    // overlay the dashboard and intercept every click.
+    mkdirSync(join(projectRoot, ".mex", "local"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, ".mex", "local", "hub-onboarding.json"),
+      `${JSON.stringify({ schemaVersion: 1, completed: true })}\n`,
+    );
     processHandle = spawn(process.execPath, [join(root, "dist", "cli.js"), "hub", "--no-open"], {
       cwd: projectRoot,
       env: { ...process.env, MEX_TELEMETRY: "0", NO_COLOR: "1" },
@@ -2434,6 +2444,8 @@ test.describe("built production Hub", () => {
     const productionOrigin = new URL(bootstrapUrl).origin;
     const crossOriginRequests: string[] = [];
     const teamAccessDialogRequests: string[] = [];
+    const setupAssetRequests: string[] = [];
+    const contactAssetRequests: string[] = [];
     const idleApiRequests: string[] = [];
     const relayDraftRequests: string[] = [];
     const relayWorkstreamRequests: string[] = [];
@@ -2442,6 +2454,8 @@ test.describe("built production Hub", () => {
       const url = new URL(request.url());
       if (url.origin !== productionOrigin) crossOriginRequests.push(request.url());
       if (/\/TeamAccessDialog-[^/]+\.js$/u.test(url.pathname)) teamAccessDialogRequests.push(request.url());
+      if (/\/(?:SetupPage|setup)-[^/]+\.js$/u.test(url.pathname)) setupAssetRequests.push(request.url());
+      if (/\/contact-[^/]+\.js$/u.test(url.pathname)) contactAssetRequests.push(request.url());
       if (url.origin === productionOrigin && url.pathname === "/api/v1/relays/drafts") {
         relayDraftRequests.push(request.url());
       }
@@ -2455,6 +2469,8 @@ test.describe("built production Hub", () => {
     const response = await page.goto(bootstrapUrl);
     await expect(page.locator('[data-overview-workbench="ready"]')).toBeVisible();
     await expect.poll(() => page.url()).not.toContain("#token=");
+    await expect.poll(() => contactAssetRequests.length).toBe(1);
+    expect(setupAssetRequests).toEqual([]);
     expect(teamAccessDialogRequests).toEqual([]);
     const requestAccess = page.getByRole("button", { name: "Request access", exact: true });
     await requestAccess.click();

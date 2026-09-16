@@ -7,6 +7,7 @@ export default defineConfig({
     ids: "src/ids.ts",
     overview: "src/overview.ts",
     setup: "src/setup.ts",
+    contact: "src/contact.ts",
   },
   format: ["esm"],
   target: "es2022",

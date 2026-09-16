@@ -16,7 +16,9 @@ edges:
     condition: when starting a task — check the pattern index for a matching pattern file
   - target: patterns/release-readme-visuals.md
     condition: when refreshing the release README, badges, community links, or architecture illustrations
-last_updated: 2026-09-11
+  - target: patterns/hub-first-run-onboarding.md
+    condition: when adding or changing the Hub first-run tour or its checkout-local completion state
+last_updated: 2026-09-13
 ---
 
 # Session Bootstrap
@@ -28,7 +30,24 @@ Then read this file fully before doing anything else in this session.
 ## Current Project State
 
 **Working:**
-- Incomplete checkouts open a Hub setup wizard from `mex hub` instead of the
+
+- 0.8.2 setup work on `codex/0.8.2-hub-setup` makes `mex setup` and bare
+  `mex` browser entry points; `setup --cli` retains terminal setup and
+  `setup --dry-run` remains a read-only terminal preview. Setup commits now
+  lead to a completion guide with explicit **Open Hub**, version-pinned optional
+  global installation, and an optional Web3Forms email/name form. Only contact
+  preference markers are retained under the user's global `.mex/setup/`;
+  details stay out of project files and telemetry. Overview shares that
+  preference. Agent failures retain the actual manual population prompt and
+  integration pointer notes are advisory. The existing tour still starts only
+  in the full Hub. Fresh-project interview changes remain deferred.
+  The PR #197 performance fix isolates shared contact contracts from setup and
+  keeps setup limits independent of the full Hub schema barrel. All setup-stage
+  assets, including the contact module, are measured; shared/runtime limits stay
+  frozen. The release plan records the deterministic calibration and CI evidence.
+  This is branch implementation, not a published release; verification
+  and outstanding release gates are in `docs/design/0.8.2-release-plan.md`.
+- Incomplete checkouts open a Hub setup wizard from `mex`, `mex setup`, or `mex hub` instead of the
   full dashboard. Setup begins on a welcome screen, then runs the same ordered
   `mex setup` steps through a headless engine, pauses at population with a
   copyable prompt when no selected CLI is available. Claude/Codex population
@@ -41,9 +60,15 @@ Then read this file fully before doing anything else in this session.
   and honest quiet periods. Commands, arguments, paths, and tool results are
   omitted from the tool stream. History stays in process memory and reconnects
   through cursor pages.
+  After promotion, the full Hub shows a first-run spotlight tour once per
+  checkout. It overlays the live sidebar and points at Search, Project,
+  Teamwork, System, Settings (replay), and Context. Skip and completion are
+  recorded in `.mex/local/hub-onboarding.json` through
+  `/api/v1/settings/onboarding`, so they survive relaunches on new loopback
+  ports; Settings can replay the tour. The setup wizard never hosts it.
   Mode and empty tool choices survive refresh. New code projects show a bounded
   setup-file diff with numbered, highlighted additions/removals and an explicit
-  local commit action before in-place Hub promotion; the commit preserves
+  local commit action before the completion guide and explicit in-place Hub promotion; the commit preserves
   unrelated staged work and never pushes. The review lists per-file counts and
   loads each file's diff on expand from the retained snapshot (128 Ki characters
   per file, 1 Mi per review); any truncated diff still forces a manual commit.
@@ -108,7 +133,11 @@ Then read this file fully before doing anything else in this session.
   readable. Bounded private graph/code projections never maintain indexes;
   completed Graph/Wiki jobs invalidate the Context caches. Home and primary
   navigation now emphasize Context, Code, Relays, and Activity while legacy
-  workflow routes remain readable. Local verification is recorded in the
+  workflow routes remain readable. Overview keeps the two-column atlas and
+  original Attention queue. A compact Context doorway sits above the atlas
+  for everyday return visits; first-run welcome stays on Setup. The From mex
+  waitlist remains under Latest team memory. Local
+  verification is recorded in the
   same release plan; this is local implementation, not a published release.
 - Phase 2b extends Inbox into an explicit contribution workflow for existing
   Wiki knowledge: architecture, component, convention, decision, pattern, and
