@@ -232,7 +232,7 @@ Upgrading does not modify an existing `.mex/` scaffold. To pick up the new guida
 
 ### Added
 - **Compatibility contract** — [COMPATIBILITY.md](COMPATIBILITY.md) now defines the package's public contract for embedders: the stable surface is exactly what `src/index.ts` re-exports (functions, runtime constants, types), CLI flags are best-effort, and what counts as a breaking change is spelled out. [#45](https://github.com/mex-memory/mex/pull/45)
-- **Event trace field** — `EventEntry` and `LogOpts` accept an optional free-form `trace` string, typically a path under `.mex/traces/`, for embedders that capture richer context than the short `message` field holds. Written only when provided; `mex timeline` (including `--json`) preserves it.
+- **Event trace field** — `EventEntry` and `LogOpts` accept an optional free-form `trace` string, typically a path under `.mex/traces/`, for embedders that capture richer context than the short `message` field holds. Written only when provided and preserved by `readEvents` and `mex timeline --json`.
 
 ### Compatibility
 - The `trace` field is additive and optional — existing event logs and JSONL consumers are unaffected, and no scaffold migration is required.
@@ -244,6 +244,7 @@ Upgrading does not modify an existing `.mex/` scaffold. To pick up the new guida
 
 ### Compatibility
 - The npm package name changed to `mex-agent` in this window (the installed binary command remains `mex`); see the 0.3.5 notes for the user-facing rename summary.
+- **Package subpath imports restricted** — the new `exports` map exposes only `mex-agent` and `mex-agent/package.json`. Previously resolvable internal paths such as `mex-agent/dist/cli.js` now fail with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Import library helpers from `mex-agent`; invoke the CLI through the installed `mex` command.
 
 ## [0.3.5] - 2026-05-14
 
