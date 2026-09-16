@@ -914,6 +914,7 @@ program
       const { runTimeline } = await import("./events.js");
       await runTimeline(config, {
         json: opts.json,
+        format: opts.format,
         since: opts.since,
         kind: opts.type,
         query: opts.query,
