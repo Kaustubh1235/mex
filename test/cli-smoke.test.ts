@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = join(repoRoot, "dist", "cli.js");
 const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { version: string };
+const childTimeoutMs = 10_000;
+// The timeline case runs three children; leave room for fixture work as well.
+const testTimeoutMs = 3 * childTimeoutMs + 5_000;
 
 const roots: string[] = [];
 
@@ -52,6 +55,8 @@ function mex(
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd: root,
     encoding: "utf8",
+    timeout: childTimeoutMs,
+    killSignal: "SIGKILL",
     env: {
       ...process.env,
       HOME: root,
@@ -60,8 +65,16 @@ function mex(
       NO_COLOR: "1",
     },
   });
+  if (result.error || result.signal || result.status === null) {
+    throw new Error(
+      `mex ${args.join(" ")} did not exit normally (timeout: ${childTimeoutMs}ms)\n` +
+      `error: ${result.error?.message ?? "none"}\n` +
+      `signal: ${result.signal ?? "none"}\n` +
+      `stderr:\n${result.stderr ?? ""}`,
+    );
+  }
   return {
-    status: result.status ?? -1,
+    status: result.status,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
@@ -71,7 +84,7 @@ afterAll(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("CLI smoke test against a fixture scaffold", () => {
+describe("CLI smoke test against a fixture scaffold", { timeout: testTimeoutMs }, () => {
   it("--version prints the package.json version (would catch a drifted constant)", () => {
     const root = project();
     const result = mex(root, ["--version"]);
@@ -91,7 +104,9 @@ describe("CLI smoke test against a fixture scaffold", () => {
     expect(timeline.status).toBe(0);
     expect(timeline.stdout).toContain("smoke: chose the bounded resolver");
 
-    const asJson = JSON.parse(mex(root, ["timeline", "--json"]).stdout) as {
+    const jsonTimeline = mex(root, ["timeline", "--json"]);
+    expect(jsonTimeline.status).toBe(0);
+    const asJson = JSON.parse(jsonTimeline.stdout) as {
       events: Array<{ kind: string; message: string }>;
     };
     expect(asJson.events).toEqual([
@@ -126,6 +141,7 @@ describe("CLI smoke test against a fixture scaffold", () => {
 
     const result = mex(root, ["heartbeat"]);
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain("HEARTBEAT_OK");
   });
 
   it("doctor summarizes scaffold health without crashing", () => {
