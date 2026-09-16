@@ -9,10 +9,8 @@ import {
   type GraphMaintenanceResult,
 } from "./maintenance.js";
 import { inspectGraphStatus } from "./status.js";
-import {
-  unindexedExtensionHistogram,
-  type GraphCoverageHistogram,
-} from "./corpus-policy.js";
+import type { GraphCoverageHistogram } from "./corpus-policy.js";
+import { coverageFields, readStoredGraphCoverage } from "./coverage.js";
 
 export interface GraphCommandOptions {
   /** Project root to inspect or maintain (defaults to cwd). */
@@ -33,23 +31,31 @@ export async function runGraphStatus(options: GraphCommandOptions = {}): Promise
 export async function runGraphRefresh(options: GraphCommandOptions = {}): Promise<void> {
   const rootDir = options.root ?? process.cwd();
   const result = await refreshGraph(rootDir);
-  if (options.json) console.log(JSON.stringify(result, null, 2));
-  else printMaintenance("refreshed", result);
+  const coverage = await readStoredGraphCoverage(rootDir, result.status.status === "fresh");
+  if (options.json) console.log(JSON.stringify({ ...result, ...coverageFields(coverage) }, null, 2));
+  else {
+    printMaintenance("refreshed", result);
+    printUnindexedSources(coverage);
+  }
 }
 
 /** Explicit isolated candidate rebuild with atomic publication and recovery. */
 export async function runGraphRebuild(options: GraphCommandOptions = {}): Promise<void> {
   const rootDir = options.root ?? process.cwd();
   const result = await rebuildGraph(rootDir);
-  if (options.json) console.log(JSON.stringify(result, null, 2));
-  else printMaintenance("rebuilt", result);
+  const coverage = await readStoredGraphCoverage(rootDir, result.status.status === "fresh");
+  if (options.json) console.log(JSON.stringify({ ...result, ...coverageFields(coverage) }, null, 2));
+  else {
+    printMaintenance("rebuilt", result);
+    printUnindexedSources(coverage);
+  }
 }
 
 /** Backward-compatible `mex graph`, now implemented as a safe rebuild. */
 export async function runGraph(options: GraphCommandOptions = {}): Promise<void> {
   const rootDir = options.root ?? process.cwd();
   const result = await rebuildGraph(rootDir);
-  const coverage = unindexedExtensionHistogram(rootDir);
+  const coverage = await readStoredGraphCoverage(rootDir, result.status.status === "fresh");
   if (options.json) {
     console.log(JSON.stringify({
       filesIndexed: result.filesIndexed,
@@ -61,15 +67,7 @@ export async function runGraph(options: GraphCommandOptions = {}): Promise<void>
         partial: result.status.parseHealth.partial,
         failed: result.status.parseHealth.failed,
       },
-      ...(coverage.total > 0
-        ? {
-            unindexedSources: {
-              total: coverage.total,
-              byExtension: Object.fromEntries(coverage.entries.map((e) => [e.extension, e.files])),
-              truncated: coverage.truncated,
-            },
-          }
-        : {}),
+      ...coverageFields(coverage),
       ...(result.skipped && result.skipped.length > 0 ? { skipped: result.skipped } : {}),
       ...(result.declinedInputs && result.declinedInputs.length > 0
         ? { declinedInputs: result.declinedInputs }
@@ -96,8 +94,8 @@ export async function runGraph(options: GraphCommandOptions = {}): Promise<void>
  * a typo gets. Absent when the histogram found nothing, so existing outputs
  * (and every script consuming them) are unchanged for fully supported repos.
  */
-function printUnindexedSources(coverage: GraphCoverageHistogram): void {
-  if (coverage.total === 0) return;
+function printUnindexedSources(coverage: GraphCoverageHistogram | null): void {
+  if (!coverage || (coverage.total === 0 && !coverage.truncated)) return;
   const shown = coverage.entries.slice(0, MAX_SKIPPED_PATHS_SHOWN);
   const breakdown = shown.map((entry) => `${entry.extension} (${entry.files})`).join(", ");
   console.log(

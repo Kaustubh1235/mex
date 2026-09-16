@@ -5,7 +5,7 @@ import { graphManifest, graphManifestDiffersOnlyByConfig } from "./engine-impl.j
 import type { GraphEngine, GraphNeighbor, IndexedFileInfo } from "./engine.js";
 import type { SqliteDatabase } from "./db/sqlite.js";
 import { isSupportedSourceFile, SUPPORTED_SOURCE_GLOB } from "./extraction/index.js";
-import { unindexedExtensionHistogram } from "./corpus-policy.js";
+import { coverageFields, hasGraphCoverageCache, readGraphCoverage } from "./coverage.js";
 import type { GraphEdge, GraphNode } from "./types.js";
 import {
   compactFact, groupByFile, planFileSource, readNodeSource, selectScope, sourceHash,
@@ -85,7 +85,7 @@ export function runImpact(
       for (const record of configDriftRecords(session)) writeJson(write, record);
       writeJson(write, {
         type: "error", code: "TARGET_NOT_FOUND", target,
-        ...targetNotFoundCoverage(session.graph, rootDir),
+        ...targetNotFoundCoverage(session, rootDir),
       });
       return;
     }
@@ -190,7 +190,7 @@ export function runGraphQuery(
       for (const record of configDriftRecords(session)) writeJson(write, record);
       writeJson(write, {
         type: "error", code: "TARGET_NOT_FOUND", target,
-        ...targetNotFoundCoverage(session.graph, rootDir),
+        ...targetNotFoundCoverage(session, rootDir),
       });
       return;
     }
@@ -697,7 +697,14 @@ export function runGraphScope(
     if (textFallbackFiles.length > 0) truncated = true;
     const materiallyReliesOnTextOnly = textFallbackFiles.length > 0
       && !hasTrustworthyGraphPrimary;
+    const coverage = readGraphCoverage(session.db, rootDir,
+      staleFiles.length === 0 && unindexedFiles.length === 0 && health.failedFiles === 0
+        && health.partialFiles === 0 && !session.degradations?.length);
+    const coverageUnknown = coverage === null && hasGraphCoverageCache(session.db);
+    const coverageIncomplete = coverage !== null && (coverage.total > 0 || coverage.truncated);
     const warnings = [
+      ...(coverageUnknown ? ["Graph coverage is unknown: its cached observation is unavailable or stale; use source search or run mex graph rebuild."] : []),
+      ...(coverageIncomplete ? [`Graph coverage excludes ${coverage.truncated ? "at least " : ""}${coverage!.total} recognized source file(s) with unsupported extensions (${coverage!.entries.map((entry) => `${entry.extension}: ${entry.files}`).join(", ")}); use source search for these languages.`] : []),
       ...(health.failedFiles > 0 ? [`${health.failedFiles} indexed file(s) have failed structural parsing.`] : []),
       ...(health.partialFiles > 0 ? [`${health.partialFiles} indexed file(s) have partial structural parsing.`] : []),
       ...(staleFiles.length > 0
@@ -719,7 +726,7 @@ export function runGraphScope(
     const status = returnedFiles.length === 0 && facts.length === 0 && flowRecords.length === 0
       ? "no-match"
       : highPriorityEvidenceOmitted ? "partial"
-        : materiallyReliesOnTextOnly ? "degraded"
+        : materiallyReliesOnTextOnly || coverageIncomplete || coverageUnknown ? "degraded"
           : "ok";
     const suggestions = status === "partial" && facts.length > 0
       ? [`mex graph get ${facts[0]!.node.id} --detail source`] : [];
@@ -2539,20 +2546,13 @@ function liveUnindexedFiles(indexedFiles: IndexedFileInfo[], rootDir: string): s
  * their exact prior shape. Absent otherwise, because this reporting must
  * never fail the command that carries it.
  */
-function targetNotFoundCoverage(graph: GraphEngine, rootDir: string): Record<string, unknown> {
-  const indexedFiles = graph.getIndexedFiles?.() ?? [];
-  const coverage = unindexedExtensionHistogram(rootDir);
-  if (coverage.total === 0 && indexedFiles.length > 0) return {};
-  const context: Record<string, unknown> = { filesIndexed: indexedFiles.length };
-  if (coverage.total > 0) {
-    context.unindexedSources = {
-      total: coverage.total,
-      byExtension: Object.fromEntries(
-        coverage.entries.map((entry) => [entry.extension, entry.files]),
-      ),
-    };
-  }
-  return context;
+function targetNotFoundCoverage(session: AgentGraphSession, rootDir: string): Record<string, unknown> {
+  const indexedFiles = session.graph.getIndexedFiles?.() ?? [];
+  const coverage = readGraphCoverage(session.db, rootDir,
+    !session.degradations?.length && !session.driftedSources?.length
+      && (!session.graphStatus || session.graphStatus.status === "fresh"));
+  if ((!coverage || (coverage.total === 0 && !coverage.truncated)) && indexedFiles.length > 0) return {};
+  return { filesIndexed: indexedFiles.length, ...coverageFields(coverage) };
 }
 
 function nodeRef(node: GraphNode): Record<string, string | number> {

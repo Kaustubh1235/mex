@@ -210,6 +210,29 @@ test("current-schema integrity hashing includes graph rows and semantic metadata
   assert.equal(changed.belowFlowThresholdEdges, 1);
 });
 
+test("coverage hashing ignores directory witnesses but retains coverage meaning", () => {
+  const path = snapshotIntegrityFixture();
+  const cache = {
+    version: 1, policy: "coverage-policy",
+    histogram: { total: 2, entries: [{ extension: ".go", files: 2 }], truncated: false },
+    directories: [{ path: ".", stamp: "1:2:3:4" }],
+  };
+  const write = (value) => {
+    const db = new DatabaseSync(path);
+    db.prepare(`INSERT INTO project_metadata VALUES (?, ?, 1)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run("unindexed_source_coverage", JSON.stringify(value));
+    db.close();
+  };
+  write(cache);
+  const first = normalizedHash(path);
+  write({ ...cache, directories: [{ path: ".", stamp: "9:8:7:6" }] });
+  assert.equal(normalizedHash(path), first);
+  write({ ...cache, histogram: { ...cache.histogram, truncated: true } });
+  assert.notEqual(normalizedHash(path), first);
+  write({ ...cache, version: 2 });
+  assert.throws(() => normalizedHash(path));
+});
+
 test("graph snapshot hashing excludes only timestamps and Git coordinates", () => {
   const path = snapshotIntegrityFixture();
   const absentHash = normalizedHash(path);

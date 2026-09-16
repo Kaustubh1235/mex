@@ -1,7 +1,10 @@
+import fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { captureGraphCoverage, COVERAGE_CACHE_LIMITS, readGraphCoverage } from "../coverage.js";
+import type { SqliteDatabase } from "../db/sqlite.js";
 import {
   GRAPH_COVERAGE_LIMITS,
   unindexedExtensionHistogram,
@@ -114,5 +117,72 @@ describe("unindexedExtensionHistogram", () => {
       { extension: ".kt", files: 1 },
     ]);
     expect(coverage.truncated).toBe(false);
+  });
+});
+
+function cachedDb(raw: string): SqliteDatabase {
+  return { prepare: () => ({ get: () => ({ value: raw }) }) } as unknown as SqliteDatabase;
+}
+
+describe("build-time coverage cache", () => {
+  it("counts 600 candidates exactly in a 30k-file tree", () => {
+    const root = temporaryRoot();
+    for (let i = 0; i < 30_000; i++) source(root, `data/${i}.txt`, "");
+    for (let i = 0; i < 600; i++) source(root, `src/${i}.go`, "package main");
+    const raw = captureGraphCoverage(root);
+    expect(readGraphCoverage(cachedDb(raw), root, true)).toMatchObject({ total: 600, truncated: false });
+    // Large fixture cleanup belongs to this test's explicit runtime budget.
+    roots.splice(roots.indexOf(root), 1);
+    rmSync(root, { recursive: true, force: true });
+  }, 120_000);
+
+  it("reuses metadata without any directory discovery on reads", () => {
+    const root = temporaryRoot();
+    source(root, "src/main.go", "package main");
+    const raw = captureGraphCoverage(root);
+    const spy = vi.spyOn(fs, "opendirSync").mockImplementation(() => { throw new Error("read-time walk"); });
+    try {
+      for (let i = 0; i < 3; i++) expect(readGraphCoverage(cachedDb(raw), root, true)?.total).toBe(1);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("invalidates nested additions, new directories and deletions even without supported-source drift", () => {
+    const root = temporaryRoot();
+    source(root, "src/main.go", "package main");
+    let raw = captureGraphCoverage(root);
+    source(root, "src/added.vue", "<template />");
+    expect(readGraphCoverage(cachedDb(raw), root, true)).toBeNull();
+    raw = captureGraphCoverage(root);
+    source(root, "new/deep/added.go", "package main");
+    expect(readGraphCoverage(cachedDb(raw), root, true)).toBeNull();
+    raw = captureGraphCoverage(root);
+    rmSync(join(root, "src/main.go"));
+    expect(readGraphCoverage(cachedDb(raw), root, true)).toBeNull();
+  });
+
+  it("does not claim exact counts for stale/degraded, malformed or over-bound metadata", () => {
+    const root = temporaryRoot();
+    source(root, "main.go", "package main");
+    const raw = captureGraphCoverage(root);
+    expect(readGraphCoverage(cachedDb(raw), root, false)).toBeNull();
+    for (const malformed of ["{", "null", "{}", JSON.stringify({ ...JSON.parse(raw), directories: Array(COVERAGE_CACHE_LIMITS.directories + 1).fill({}) })]) {
+      expect(readGraphCoverage(cachedDb(malformed), root, true)).toBeNull();
+    }
+  });
+
+  it("returns unknown when a directory cannot be observed or the observation cap is crossed", () => {
+    const root = temporaryRoot();
+    const denied = vi.spyOn(fs, "opendirSync").mockImplementation(() => { throw new Error("denied"); });
+    try { expect(captureGraphCoverage(root)).toBe("null"); } finally { denied.mockRestore(); }
+    const huge = vi.spyOn(fs, "opendirSync").mockImplementation(() => ({
+      readSync: () => ({ name: "entry" }), closeSync: () => {},
+    }) as unknown as fs.Dir);
+    try { expect(captureGraphCoverage(root)).toBe("null"); } finally { huge.mockRestore(); }
+  });
+
+  it("drops schema and shell extension noise", () => {
+    const root = temporaryRoot();
+    for (const ext of ["sql", "proto", "gradle", "ps1", "bash", "zsh", "vim"]) source(root, `file.${ext}`, "text");
+    expect(unindexedExtensionHistogram(root)).toEqual({ total: 0, entries: [], truncated: false });
   });
 });

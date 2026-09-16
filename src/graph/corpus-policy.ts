@@ -340,12 +340,12 @@ export function graphCorpusPolicyHash(root: string): string {
  * this list alone.
  */
 export const OTHER_KNOWN_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".astro", ".bash", ".c", ".cc", ".clj", ".cljs", ".coffee", ".cpp", ".cr",
+  ".astro", ".c", ".cc", ".clj", ".cljs", ".coffee", ".cpp", ".cr",
   ".cs", ".cxx", ".d", ".dart", ".elm", ".erl", ".ex", ".exs", ".f90", ".f95",
-  ".go", ".gradle", ".groovy", ".h", ".hh", ".hpp", ".hrl", ".hs", ".hxx",
+  ".go", ".groovy", ".h", ".hh", ".hpp", ".hrl", ".hs", ".hxx",
   ".java", ".jl", ".kt", ".kts", ".lua", ".m", ".mm", ".nim", ".pas", ".php",
-  ".pl", ".pm", ".proto", ".ps1", ".r", ".rb", ".scala", ".sol", ".sql",
-  ".svelte", ".swift", ".tcl", ".vim", ".vue", ".zsh", ".zig",
+  ".pl", ".pm", ".r", ".rb", ".scala", ".sol",
+  ".svelte", ".swift", ".tcl", ".vue", ".zig",
 ] as const);
 
 /** One line of the coverage histogram: an extension and how many files use it. */
@@ -363,7 +363,7 @@ export const GRAPH_COVERAGE_LIMITS: GraphCoverageLimits = Object.freeze({
 } as const);
 
 export interface GraphCoverageLimits {
-  /** Cap on files the complementary walk may scan before it stops, truncated. */
+  /** Cap on recognized unsupported candidates, not unrelated repository files. */
   maxUnindexedFiles: number;
   /** Cap on distinct extensions kept in the reported histogram. */
   maxUnindexedEntries: number;
@@ -383,35 +383,31 @@ export interface GraphCoverageHistogram {
  *
  * The walk complements {@link discoverBoundedGraphPaths}: same glob options and
  * ignore list (so a repository's own `graph.ignore` config shapes the answer),
- * but globbing every file and keeping only known-source extensions
+ * but globbing candidate extensions and keeping only known-source extensions
  * {@link isSupportedSourceFile} rejects. Dot-directories stay invisible, as
  * they are to source discovery itself.
  *
- * Best-effort by contract: an unreadable tree yields an empty histogram rather
+ * Best-effort by contract: an unreadable tree yields a truncated histogram rather
  * than an error, because this reporting must never fail the command that
  * carries it.
  */
 export function unindexedExtensionHistogram(
   root: string,
   limits: GraphCoverageLimits = GRAPH_COVERAGE_LIMITS,
+  filesystem?: GlobOptions["fs"],
 ): GraphCoverageHistogram {
   const counts = new Map<string, number>();
   let total = 0;
-  let scanned = 0;
   let truncated = false;
   try {
-    for (const match of globIterateSync("**/*", {
+    const extensions = [...OTHER_KNOWN_SOURCE_EXTENSIONS].map((extension) => extension.slice(1));
+    for (const match of globIterateSync(`**/*.{${extensions.join(",")}}`, {
       ...GRAPH_CORPUS_GLOB_OPTIONS,
+      nocase: true,
       cwd: root,
       ignore: graphCorpusIgnoreGlobs(root),
+      ...(filesystem ? { fs: filesystem } : {}),
     })) {
-      // The cap bounds the whole walk, not only counted files: a repository of
-      // a hundred thousand uninteresting files must not scan forever either.
-      scanned++;
-      if (scanned > limits.maxUnindexedFiles) {
-        truncated = true;
-        break;
-      }
       const relPath = String(match).split("\\").join("/");
       if (isSupportedSourceFile(relPath)) continue;
       const segment = relPath.slice(relPath.lastIndexOf("/") + 1);
@@ -420,12 +416,16 @@ export function unindexedExtensionHistogram(
       if (dot <= 0 || dot === segment.length - 1) continue;
       const extension = segment.slice(dot).toLowerCase();
       if (!OTHER_KNOWN_SOURCE_EXTENSIONS.has(extension)) continue;
+      if (total >= limits.maxUnindexedFiles) {
+        truncated = true;
+        break;
+      }
       total++;
       counts.set(extension, (counts.get(extension) ?? 0) + 1);
     }
   } catch {
-    // Coverage reporting must never fail a build; a partial or empty report
-    // reads as "nothing observed", which is what an unreadable tree tells.
+    // Never represent a failed observation as complete coverage.
+    truncated = true;
   }
   const entries = [...counts.entries()]
     .sort((left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : 1))
