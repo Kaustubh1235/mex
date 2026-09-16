@@ -278,9 +278,15 @@ describe("built CLI main-module guard", () => {
         const result = spawnSync(process.execPath, [cliPath, "timeline", ...args], {
           cwd: fixture,
           encoding: "utf8",
+          // Bound the child so a hung timeline fails with diagnostics
+          // instead of hanging the worker.
+          timeout: 30_000,
           env: { ...process.env, HOME: fixture, MEX_TELEMETRY: "0", DO_NOT_TRACK: "1", NO_COLOR: "1", FORCE_COLOR: "0" },
         });
-        expect(result.status, result.stderr).toBe(0);
+        const detail = result.error ? String(result.error) : result.stderr;
+        expect(result.error, detail).toBeUndefined();
+        expect(result.signal, detail).toBeNull();
+        expect(result.status, detail).toBe(0);
         return result.stdout;
       };
       const expectedJson = `${JSON.stringify({
