@@ -8,6 +8,7 @@ import {
 } from "./drift/index.js";
 import { checkHeartbeat } from "./heartbeat.js";
 import { readEvents } from "./events.js";
+import { readStoredGraphCoverage, type GraphCoverageObservation } from "./graph/coverage.js";
 import {
   graphChangeDetail,
   graphPrimaryDiagnostic,
@@ -25,20 +26,30 @@ export async function runDoctor(config: MexConfig): Promise<void> {
   const heartbeat = checkHeartbeat(config);
   const events = readEvents(config);
   const graph = report.graphStatus;
+  const coverage = await readStoredGraphCoverage(config.projectRoot, graph.status === "fresh");
 
   printLine("Drift", report.score >= 80 && errors === 0, `${report.score}/100 (${errors} errors, ${warnings} warnings)`);
   printLine("Graph", graph.status === "fresh", graphStatusDetail(graph));
-  printLine("Heartbeat", heartbeat.ok, heartbeat.ok ? "HEARTBEAT_OK" : `${heartbeat.staleFiles.length} stale files, ${heartbeat.oldDailyMemoryFiles.length} old memory files`);
+  printLine("Coverage", coverage?.histogram.total === 0 && !coverage.histogram.truncated, coverageDetail(coverage));
+  printLine("Heartbeat", heartbeat.ok, heartbeat.ok
+    ? (heartbeat.filesWithoutLastUpdated
+      ? "HEARTBEAT_OK (staleness checks inactive: no parseable last_updated dates)"
+      : "HEARTBEAT_OK")
+    : `${heartbeat.staleFiles.length} stale files, ${heartbeat.oldDailyMemoryFiles.length} old memory files`);
   printLine("Events", true, `${events.length} logged event${events.length === 1 ? "" : "s"}`);
   const hasConfig = existsSync(resolve(config.scaffoldRoot, "config.json"));
   printLine("Config", true, hasConfig ? ".mex/config.json loaded with defaults for missing values" : "using defaults; no .mex/config.json found");
 
   const graphNeedsAttention = graph.status !== "fresh";
   const graphRecoveryCommand = graphRemediationCommand(graph);
-  if (errors || warnings || !heartbeat.ok || graphNeedsAttention) {
+  const unsupportedSources = (coverage?.histogram.total ?? 0) > 0;
+  if (errors || warnings || !heartbeat.ok || graphNeedsAttention || unsupportedSources) {
     console.log();
     console.log(chalk.bold("Next steps"));
     if (errors || warnings) console.log("  Run `mex check` for drift details, then `mex sync` for targeted repair prompts.");
+    if (unsupportedSources) {
+      console.log("  The listed extensions have no extractor; use source search for these languages or `mex graph --json` for the build coverage breakdown.");
+    }
     if (graphNeedsAttention && graphRecoveryCommand) {
       console.log(`  Run \`${graphRecoveryCommand}\` to repair the graph explicitly.`);
     } else if (graphNeedsAttention) {
@@ -48,6 +59,15 @@ export async function runDoctor(config: MexConfig): Promise<void> {
   }
 
   if (errors) process.exitCode = 1;
+}
+
+function coverageDetail(observation: GraphCoverageObservation | null): string {
+  if (!observation) return "unknown (no readable coverage observation); run mex graph rebuild";
+  const coverage = observation.histogram;
+  const age = observation.verified ? "" : " (as of the last graph build)";
+  if (coverage.total === 0 && !coverage.truncated) return `all recognized source files are indexable${age}`;
+  const suffix = coverage.truncated ? ", walk stopped early" : "";
+  return `${coverage.total} source file(s) not indexable by any extractor: ${coverage.entries.slice(0, 10).map((entry) => `${entry.extension} (${entry.files})`).join(", ")}${suffix}${age}`;
 }
 
 function graphStatusDetail(graph: GraphAwareDriftReport["graphStatus"]): string {

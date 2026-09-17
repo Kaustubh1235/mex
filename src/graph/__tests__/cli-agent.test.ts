@@ -1342,6 +1342,99 @@ describe("runGraphQuery", () => {
     for (const result of results) expect(result).not.toHaveProperty("source");
   });
 
+  it("keeps TARGET_NOT_FOUND bare when every recognized source file is indexed", () => {
+    const bareRoot = mkdtempSync(join(tmpdir(), "mex-cli-agent-bare-"));
+    try {
+      writeFileSync(join(bareRoot, "only.ts"), "export const only = 1;\n");
+      const graph = syntheticScopeGraph({
+        nodes: [],
+        sources: [{ path: "only.ts", content: "export const only = 1;\n" }],
+        searchNodes: () => [],
+      });
+      const bareDeps: AgentCommandDeps = {
+        open: () => ({ graph, db: deps.open!(bareRoot).db, close: () => {} }),
+        write: (line) => lines.push(line),
+      };
+      const records = capture(() => runGraphQuery("where-defined", "ghost", bareRoot, bareDeps, {}));
+      const error = records.find((r) => r.type === "error" && r.code === "TARGET_NOT_FOUND");
+      expect(error).toMatchObject({ type: "error", code: "TARGET_NOT_FOUND", target: "ghost" });
+      expect(error).not.toHaveProperty("filesIndexed");
+      expect(error).not.toHaveProperty("unindexedSources");
+    } finally {
+      rmSync(bareRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("names unindexed source files on TARGET_NOT_FOUND so a miss is not confused with an unindexable file", async () => {
+    const mixedRoot = mkdtempSync(join(tmpdir(), "mex-cli-agent-coverage-"));
+    let mixedEngine: GraphEngine | null = null;
+    let db: ReturnType<typeof openSqlite> | null = null;
+    try {
+      writeFileSync(
+        join(mixedRoot, "api.ts"),
+        "export function fetchOrders(userId: string): string[] {\n  return [userId];\n}\n",
+      );
+      writeFileSync(join(mixedRoot, "OrderList.svelte"), "<script lang=\"ts\">\nlet userId = '';\n</script>\n");
+      writeFileSync(join(mixedRoot, "main.go"), "package main\n");
+      mixedEngine = createGraphEngine({ rootDir: mixedRoot });
+      await mixedEngine.build(mixedRoot);
+      db = openSqlite(join(mixedRoot, ".mex", "graph.db"));
+      const mixedDeps: AgentCommandDeps = {
+        open: () => ({ graph: mixedEngine!, db: db!, close: () => {} }),
+        write: (line) => lines.push(line),
+      };
+
+      const records = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
+      const error = records.find((r) => r.type === "error" && r.code === "TARGET_NOT_FOUND");
+      expect(error).toMatchObject({
+        type: "error",
+        code: "TARGET_NOT_FOUND",
+        target: "refreshOrders",
+        filesIndexed: 1,
+        unindexedSources: { total: 2, byExtension: { ".go": 1, ".svelte": 1 }, truncated: false },
+      });
+      const coverageWarnings = (records: Record<string, unknown>[]) => ((records.at(-1)?.warnings ?? []) as string[])
+        .filter((warning) => warning.includes("coverage"));
+
+      // A strong graph answer is not explained by other languages: status and warnings stay about the task.
+      const strong = capture(() => runGraphScope("fetchOrders", mixedRoot, mixedDeps, {}));
+      expect(strong.at(-1)).toMatchObject({ status: "ok", evidenceStrength: "strong" });
+      expect(coverageWarnings(strong)).toEqual([]);
+      expect(strong.find((record) => record.type === "health")).not.toHaveProperty("unindexedSources");
+      // A weaker answer may be explained by them: warn, but status still describes the returned evidence.
+      const moderate = capture(() => runGraphScope("orders pagination retry backoff", mixedRoot, mixedDeps, {}));
+      expect(moderate.at(-1)).toMatchObject({ status: "ok", evidenceStrength: "moderate" });
+      expect(coverageWarnings(moderate)).toEqual([expect.stringContaining("unsupported extensions")]);
+      // An empty answer may well be explained by them, so it names them without changing status.
+      const empty = capture(() => runGraphScope("checkout cart pricing", mixedRoot, mixedDeps, {}));
+      expect(empty.at(-1)).toMatchObject({ status: "no-match" });
+      expect(coverageWarnings(empty)).toEqual([expect.stringContaining("excludes 2 recognized source file(s) with unsupported extensions")]);
+
+      // A new file changes the directory stamp: counts survive, labeled with their age.
+      writeFileSync(join(mixedRoot, "new.vue"), "<template />");
+      const changed = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
+      expect(changed.find((record) => record.code === "TARGET_NOT_FOUND")).toMatchObject({
+        filesIndexed: 1,
+        unindexedSources: { total: 2, byExtension: { ".go": 1, ".svelte": 1 }, truncated: false, observedAt: "last-build" },
+      });
+      const changedScope = capture(() => runGraphScope("checkout cart pricing", mixedRoot, mixedDeps, {}));
+      expect(coverageWarnings(changedScope)).toEqual([expect.stringContaining("at the last graph build")]);
+
+      // Unreadable metadata is unknown, never silently bare.
+      db.prepare("UPDATE project_metadata SET value = '{' WHERE key = 'unindexed_source_coverage'").run();
+      const unknown = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
+      const unknownError = unknown.find((record) => record.code === "TARGET_NOT_FOUND");
+      expect(unknownError).toMatchObject({ coverage: "unknown" });
+      expect(unknownError).not.toHaveProperty("unindexedSources");
+      const unknownScope = capture(() => runGraphScope("checkout cart pricing", mixedRoot, mixedDeps, {}));
+      expect(coverageWarnings(unknownScope)).toEqual([expect.stringContaining("coverage is unknown")]);
+    } finally {
+      db?.close();
+      mixedEngine?.close();
+      rmSync(mixedRoot, { recursive: true, force: true });
+    }
+  });
+
   it("preserves the queried target on each result", () => {
     const records = capture(() => runGraphQuery("who-calls", "helper", root, deps, {}));
     const results = records.filter((r) => r.type === "result");

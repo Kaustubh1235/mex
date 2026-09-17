@@ -4,14 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.2] - Unreleased
+
 ### Added
+- Setup completion guide with fresh-session verification, optional version-pinned global installation, and optional embedded email/name contact submission through Web3Forms. Only submitted/skipped contact markers are saved per computer; contact details stay out of project files and telemetry.
 - A bounded Next.js App Router resolver turning `app/**/route.ts|js` modules (including `src/app` roots) into route nodes: one per exported HTTP handler (`GET` through `HEAD`), with the URL path derived from the route file's directory, dynamic segments such as `[id]` and catch-alls preserved verbatim, and route groups `(marketing)` excluded the way Next resolves them. Same-file handlers resolve only when unambiguous; Pages Router, layouts, and pages stay out of scope (#95).
+- Coverage reporting for source files no extractor indexes. `mex graph` now prints the recognized-but-unindexed file count grouped by extension after the build summary, with the full histogram behind `--json` as `unindexedSources`; `mex graph query` and `mex impact` add `filesIndexed` and `unindexedSources` coverage context to `TARGET_NOT_FOUND` records (only when it changes the record's meaning, so misses in fully covered repositories are unchanged); `mex graph scope` names them in a warning when its evidence is weak or empty, without changing `status`; and `mex doctor` shows a Coverage line. Counts are captured once per build: reads verify them with directory stamps, and counts that can no longer be verified are still reported, marked as observed at the last build. A mixed repository used to build a complete-looking graph while every `.svelte`, `.vue` or `.go` file was silently absent, indistinguishable from an empty one (#163).
+- A bounded Flask framework resolver connecting `@app.route()` and shortcut decorators (`@app.get()`, `@app.post()`, and their Blueprint equivalents) to their handler functions. One stable route node is emitted per explicitly declared HTTP method — with an ordinal in the role so a route declared twice in one file cannot collide ids and fail the build — Flask path converters such as `<int:user_id>` are preserved verbatim, `methods=` is read from list or tuple literals (unreadable values skip the route rather than guessing `GET`), receiver names include Blueprint instances carrying a static `url_prefix` and Flask/Blueprint objects imported from other modules, docstrings and comments are blanked before scanning, same-file handlers resolve only when unambiguous, and detection keys on a staged Python module actually importing flask — the reliable observable, since dependency manifests are not staged corpus files (#112).
+- A bounded NestJS controller route resolver: `@Controller()` prefixes combine with `@Get`/`@Post`/`@Put`/`@Patch`/`@Delete`/`@Options`/`@Head`/`@All` method paths into `METHOD /path` route nodes, with the handler in the signature and an ordinal in the role so versioned duplicates (`@Version('1')`/`@Version('2')`) keep distinct ids. Controller arguments are read from string literals and `{ path: '…' }` objects; unreadable forms (constants, arrays) skip rather than guess. Comments are blanked before scanning, routes resolve to same-file handlers — disambiguating between controllers in one file via the owning class — and edge resolution is labeled `nestjs-route-handler` (#98).
+- A first-run Project Hub tour that spotlights the live sidebar (Search, Project, Teamwork, System, Settings, and Context) once per checkout. Completion is recorded in `.mex/local/hub-onboarding.json`, so it survives Hub relaunches; Settings can replay it, and the setup wizard never shows it.
 
 ### Changed
+- `mex setup` now opens browser setup by default; `mex setup --cli` retains terminal setup and `--dry-run` stays a read-only terminal preview. Bare `mex` opens the Hub or setup, while `mex tui` retains the terminal dashboard.
+- The Hub stays on completion after a setup commit and opens the full dashboard only on **Open Hub**. Global installation in both flows pins the running release and verifies the installed version.
 
 - Project Hub Overview now opens with a compact Context card above the atlas instead of a header button. It links to Context when the Wiki index is fresh and to Health otherwise, so a stale or unavailable index no longer leads to a page that cannot load.
 
 ### Fixed
+- Agent population failures retain the real copyable manual prompt for retry or manual continuation. Integration pointer notes are visible as non-blocking guidance.
+- Setup and Overview share the computer's contact preference so completing or skipping the invitation does not immediately trigger another request.
 
 - `mex sync` now migrates an inline `mex://` anchor together with a `grounds_to` entry for the same moved node. The anchor used to reconcile on its own against the stored baseline instead of the refreshed frontmatter fingerprint. When that baseline was missing, or still listed a neighbour that had since been re-identified, the anchor was skipped or scored `AMBIGUOUS`, sync moved the shared baseline row anyway, and the next `mex check` reported `GROUNDING_GONE` until the link was edited by hand (#128).
 
@@ -314,6 +325,33 @@ Upgrading does not modify an existing `.mex/` scaffold. To pick up the new guida
 
 ### Changed
 - README and CONTRIBUTING now list all 11 drift checkers (including `tool-config-sync`, `todo-fixme`, and `broken-link`).
+
+## [0.5.1] - 2026-06-02
+
+### Fixed
+- **`--version` derived from package.json** — `mex --version` was hard-coded to `"0.3.5"` in `src/cli.ts` while `package.json` had advanced to 0.5.0, so the CLI reported a version two releases behind itself. The version is now read from `package.json` at runtime (new `src/version.ts`) so it can never drift again, with a regression test asserting the program's configured version matches `package.json`. [#48](https://github.com/mex-memory/mex/issues/48)
+
+### Changed
+- CLI-level test coverage for `log` and `timeline` option parsing, so flag regressions surface before release. [#47](https://github.com/mex-memory/mex/pull/47)
+- Documentation: a drift-checker contribution guide, and the bug-report template corrected for the CLI.
+
+## [0.5.0] - 2026-05-18
+
+### Added
+- **Compatibility contract** — [COMPATIBILITY.md](COMPATIBILITY.md) now defines the package's public contract for embedders: the stable surface is exactly what `src/index.ts` re-exports (functions, runtime constants, types), CLI flags are best-effort, and what counts as a breaking change is spelled out. [#45](https://github.com/mex-memory/mex/pull/45)
+- **Event trace field** — `EventEntry` and `LogOpts` accept an optional free-form `trace` string, typically a path under `.mex/traces/`, for embedders that capture richer context than the short `message` field holds. Written only when provided and preserved by `readEvents` and `mex timeline --json`.
+
+### Compatibility
+- The `trace` field is additive and optional — existing event logs and JSONL consumers are unaffected, and no scaffold migration is required.
+
+## [0.4.0] - 2026-05-16
+
+### Added
+- **Stable public API surface** — the package now exposes a documented, contract-tested programmatic API from its entry point (`findConfig`, `createConfig`, `appendEvent`, `readEvents`, `eventLogPath`, `runDriftCheck`, `parseFrontmatter`, `checkHeartbeat`, `runHeartbeat`, the `DEFAULT_*` runtime constants, and their types), wired through the package `exports` field so embedders get one stable import path. [#44](https://github.com/mex-memory/mex/pull/44)
+
+### Compatibility
+- The npm package name changed to `mex-agent` in this window (the installed binary command remains `mex`); see the 0.3.5 notes for the user-facing rename summary.
+- **Package subpath imports restricted** — the new `exports` map exposes only `mex-agent` and `mex-agent/package.json`. Previously resolvable internal paths such as `mex-agent/dist/cli.js` now fail with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Import library helpers from `mex-agent`; invoke the CLI through the installed `mex` command.
 
 ## [0.3.5] - 2026-05-14
 

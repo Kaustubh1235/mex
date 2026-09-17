@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { HUB_LIMITS } from "./limits.js";
+export { HUB_LIMITS } from "./limits.js";
 import {
   GraphSymbolIdSchema,
   InboxProposalIdSchema,
@@ -16,19 +18,6 @@ export {
 } from "./ids.js";
 
 export const HUB_API_VERSION = "v1" as const;
-
-export const HUB_LIMITS = {
-  maxMutationBodyBytes: 64 * 1024,
-  maxQueryCharacters: 256,
-  maxCursorBytes: 4 * 1024,
-  maxQueryStringBytes: 16 * 1024,
-  defaultPageSize: 25,
-  maxPageSize: 100,
-  maxSearchGroupSize: 50,
-  maxJsonResponseBytes: 1024 * 1024,
-  maxIdentifierCharacters: 128,
-  maxDiagnosticCount: 50,
-} as const;
 
 export const HUB_PROBLEM_CODES = [
   "NOT_FOUND",
@@ -109,6 +98,10 @@ export const AgentLoggingUpdateRequestSchema = z.object({
 export type AgentLoggingMode = z.infer<typeof AgentLoggingModeSchema>;
 export type AgentLoggingPolicy = z.infer<typeof AgentLoggingPolicySchema>;
 export type AgentLoggingUpdateRequest = z.infer<typeof AgentLoggingUpdateRequestSchema>;
+export const HubOnboardingStateSchema = z.object({ completed: z.boolean() }).strict();
+export const HubOnboardingCompleteRequestSchema = z.object({ completed: z.literal(true) }).strict();
+export type HubOnboardingState = z.infer<typeof HubOnboardingStateSchema>;
+export type HubOnboardingCompleteRequest = z.infer<typeof HubOnboardingCompleteRequestSchema>;
 
 /** Shared primitives for route-private contract entry points. */
 export const HubIsoTimestampSchema = isoTimestamp;

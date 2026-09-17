@@ -58,6 +58,8 @@ export interface LogOpts {
 
 export interface TimelineOpts {
   json?: boolean;
+  /** `"md"` renders a Markdown table instead of the terminal output (#55). */
+  format?: string;
   since?: string;
   kind?: string;
   limit?: number;
@@ -143,6 +145,11 @@ export async function runTimeline(config: MexConfig, opts: TimelineOpts = {}): P
     return;
   }
 
+  if (opts.format === "md") {
+    printTimelineMarkdown(selected, truncated, sourceTruncated);
+    return;
+  }
+
   if (selected.length === 0 && !truncated) {
     console.log(chalk.dim("No events found."));
   }
@@ -153,6 +160,67 @@ export async function runTimeline(config: MexConfig, opts: TimelineOpts = {}): P
   }
   if (truncated) console.log(chalk.dim("Some matching events were omitted by the entry or output limit; narrow the filters."));
   if (sourceTruncated) console.log(chalk.dim("Searched only the latest 8 MiB / 10,000 non-empty log lines; older history was not scanned."));
+}
+
+/**
+ * Markdown rendering for `timeline --format md` — valid inside reports and
+ * standup notes. Pipes and line breaks are escaped so a message cannot break
+ * the table; omission notes mirror the terminal output in italics. The default
+ * terminal rendering is untouched (#55).
+ */
+function printTimelineMarkdown(
+  selected: EventEntry[],
+  truncated: boolean,
+  sourceTruncated: boolean,
+): void {
+  const header = ["| Date | Type | Event | Files |", "|---|---|---|---|"];
+  const omitted = "_Some matching events were omitted by the entry or output limit; narrow the filters._";
+  const incomplete = "_Searched only the latest 8 MiB / 10,000 non-empty log lines; older history was not scanned._";
+  // The shared selection keeps its existing budget for terminal/JSON compatibility.
+  // Markdown can expand further: reserve exact header, separator and notice bytes,
+  // including every console.log newline, before accepting any complete row.
+  let outputBytes = Buffer.byteLength([...header, "", omitted, ...(sourceTruncated ? [incomplete] : [])].join("\n") + "\n", "utf8");
+  const rows: string[] = [];
+  for (const e of selected) {
+    const message = markdownTextCell(e.message);
+    const files = e.files.length ? e.files.map(markdownCodeCell).join(", ") : "—";
+    const row = `| ${markdownTextCell(e.timestamp.slice(0, 10))} | ${e.kind} | ${message} | ${files} |`;
+    const rowBytes = Buffer.byteLength(row + "\n", "utf8");
+    if (outputBytes + rowBytes > MAX_TIMELINE_OUTPUT_BYTES) {
+      truncated = true;
+      continue;
+    }
+    rows.push(row);
+    outputBytes += rowBytes;
+  }
+  if (rows.length) {
+    for (const line of [...header, ...rows]) console.log(line);
+    // A blank line prevents GFM from interpreting notices as another table row.
+    if (truncated || sourceTruncated) console.log("");
+  } else if (!truncated) {
+    console.log("_No events found._");
+  }
+  if (truncated) console.log(omitted);
+  if (sourceTruncated) console.log(incomplete);
+}
+
+function markdownTextCell(value: string): string {
+  // Escape backslashes first, then Markdown punctuation (including table pipes).
+  return value.replace(/\r\n|[\r\n]/g, " ").replace(/[\\`*_{}\[\]<>&|~]/g, "\\$&");
+}
+
+function markdownCodeCell(value: string): string {
+  const normalized = value.replace(/\r\n|[\r\n]/g, " ");
+  // Keep pipes outside code spans: GFM's table tokenizer otherwise treats an
+  // original backslash plus an escaped pipe as an unescaped cell separator.
+  return normalized.split("|").map((part) => {
+    if (part === "") return "";
+    const longestRun = (part.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+    const delimiter = "`".repeat(longestRun + 1);
+    const padding = part.startsWith("`") || part.endsWith("`") ||
+      (part.startsWith(" ") && part.endsWith(" ") && part.trim() !== "") ? " " : "";
+    return `${delimiter}${padding}${part}${padding}${delimiter}`;
+  }).join("\\|");
 }
 
 export function readEvents(config: MexConfig): EventEntry[] {

@@ -21,6 +21,10 @@
       "types": "./dist/overview.d.ts",
       "import": "./dist/overview.js"
     },
+    "./contact": {
+      "types": "./dist/contact.d.ts",
+      "import": "./dist/contact.js"
+    },
     "./setup": {
       "types": "./dist/setup.d.ts",
       "import": "./dist/setup.js"

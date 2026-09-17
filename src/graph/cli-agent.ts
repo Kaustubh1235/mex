@@ -5,6 +5,10 @@ import { graphManifest, graphManifestDiffersOnlyByConfig } from "./engine-impl.j
 import type { GraphEngine, GraphNeighbor, IndexedFileInfo } from "./engine.js";
 import type { SqliteDatabase } from "./db/sqlite.js";
 import { isSupportedSourceFile, SUPPORTED_SOURCE_GLOB } from "./extraction/index.js";
+import {
+  coverageFields, coverageReportable, hasGraphCoverageCache, readGraphCoverageObservation,
+  type GraphCoverageObservation,
+} from "./coverage.js";
 import type { GraphEdge, GraphNode } from "./types.js";
 import {
   compactFact, groupByFile, planFileSource, readNodeSource, selectScope, sourceHash,
@@ -82,7 +86,10 @@ export function runImpact(
     const roots = fileNodes.length > 0 ? fileNodes : resolveSymbol(session.graph, target);
     if (roots.length === 0) {
       for (const record of configDriftRecords(session)) writeJson(write, record);
-      writeJson(write, { type: "error", code: "TARGET_NOT_FOUND", target });
+      writeJson(write, {
+        type: "error", code: "TARGET_NOT_FOUND", target,
+        ...targetNotFoundCoverage(session, rootDir),
+      });
       return;
     }
     if (emitTargetSourceDrifted(session, write, target, roots)) return;
@@ -184,7 +191,10 @@ export function runGraphQuery(
       if (relation === "who-calls"
         && emitUnresolvedCallers(session, write, target, opts)) return;
       for (const record of configDriftRecords(session)) writeJson(write, record);
-      writeJson(write, { type: "error", code: "TARGET_NOT_FOUND", target });
+      writeJson(write, {
+        type: "error", code: "TARGET_NOT_FOUND", target,
+        ...targetNotFoundCoverage(session, rootDir),
+      });
       return;
     }
 
@@ -690,7 +700,24 @@ export function runGraphScope(
     if (textFallbackFiles.length > 0) truncated = true;
     const materiallyReliesOnTextOnly = textFallbackFiles.length > 0
       && !hasTrustworthyGraphPrimary;
+    // Unsupported languages can only explain an answer that is weak or empty.
+    // Repositories that parse many languages keep fixtures in all of them, and
+    // flagging every strong answer there would send agents narrowing tasks the
+    // graph already answered; `status` stays about this task's evidence.
+    const coverageMayExplainGap = selection.evidenceStrength !== "strong" || materiallyReliesOnTextOnly;
+    // Parse health says nothing about which languages exist, so only drift in
+    // the indexed corpus itself stops coverage from verifying as current.
+    const coverage = coverageMayExplainGap
+      ? readGraphCoverageObservation(session.db, rootDir, {
+        graphCurrent: staleFiles.length === 0 && unindexedFiles.length === 0 && !session.degradations?.length,
+        verify: "when-reported",
+      })
+      : null;
+    const coverageUnknown = coverageMayExplainGap && coverage === null && hasGraphCoverageCache(session.db);
+    const coverageIncomplete = coverage !== null && coverageReportable(coverage.histogram);
     const warnings = [
+      ...(coverageUnknown ? ["Graph coverage is unknown: its cached observation is unreadable; use source search or run mex graph rebuild."] : []),
+      ...(coverageIncomplete ? [coverageWarning(coverage!)] : []),
       ...(health.failedFiles > 0 ? [`${health.failedFiles} indexed file(s) have failed structural parsing.`] : []),
       ...(health.partialFiles > 0 ? [`${health.partialFiles} indexed file(s) have partial structural parsing.`] : []),
       ...(staleFiles.length > 0
@@ -2519,6 +2546,41 @@ function liveUnindexedFiles(indexedFiles: IndexedFileInfo[], rootDir: string): s
   }).map((file) => file.replaceAll("\\", "/"))
     .filter((file) => isSupportedSourceFile(file) && !indexed.has(file))
     .sort();
+}
+
+/**
+ * Coverage context for a `TARGET_NOT_FOUND` record.
+ *
+ * A miss and a typo currently emit the identical record, so an agent cannot
+ * tell "this symbol does not exist" from "this symbol lives in a file no
+ * extractor indexes". The context is emitted only when it changes the
+ * record's meaning — the store indexed nothing, or recognized source files
+ * were left unindexed — so ordinary misses in a healthy repository keep
+ * their exact prior shape. Absent otherwise, because this reporting must
+ * never fail the command that carries it.
+ */
+function targetNotFoundCoverage(session: AgentGraphSession, rootDir: string): Record<string, unknown> {
+  const indexedFiles = session.graph.getIndexedFiles?.() ?? [];
+  const coverage = readGraphCoverageObservation(session.db, rootDir, {
+    graphCurrent: !session.degradations?.length && !session.driftedSources?.length
+      && (!session.graphStatus || session.graphStatus.status === "fresh"),
+    verify: "when-reported",
+  });
+  // An unreadable observation must not fall back to the bare record: that is
+  // the "a miss looks like a typo" answer this context exists to prevent.
+  const unknown = coverage === null && hasGraphCoverageCache(session.db) ? { coverage: "unknown" } : {};
+  if ((!coverage || !coverageReportable(coverage.histogram)) && indexedFiles.length > 0) return unknown;
+  return { filesIndexed: indexedFiles.length, ...unknown, ...coverageFields(coverage) };
+}
+
+/** Counts not re-verified since the build are still named, with their age stated. */
+function coverageWarning(coverage: GraphCoverageObservation): string {
+  const { histogram } = coverage;
+  const breakdown = histogram.entries.map((entry) => `${entry.extension}: ${entry.files}`).join(", ");
+  const count = `${histogram.truncated ? "at least " : ""}${histogram.total}`;
+  return coverage.verified
+    ? `Graph coverage excludes ${count} recognized source file(s) with unsupported extensions (${breakdown}); use source search for these languages.`
+    : `Graph coverage excluded ${count} recognized source file(s) with unsupported extensions at the last graph build (${breakdown}); use source search for these languages.`;
 }
 
 function nodeRef(node: GraphNode): Record<string, string | number> {

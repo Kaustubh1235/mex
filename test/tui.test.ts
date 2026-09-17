@@ -92,6 +92,54 @@ describe("TUI components", () => {
     expect(app.lastFrame()).toContain("████");
   });
 
+  describe.each([
+    ["Summary", Summary],
+    ["HeartbeatPanel", HeartbeatPanel],
+    ["DoctorPanel", DoctorPanel],
+  ] as const)("%s staleness participation", (name, Component) => {
+    it.each([true, false])("shows inactive checks and opt-in guidance when heartbeat ok=%s", (ok) => {
+      const app = render(h(Component, {
+        data: data({
+          heartbeat: {
+            ok,
+            staleFiles: [],
+            memoryCleanupDue: !ok,
+            oldDailyMemoryFiles: ok ? [] : ["memory/2026-04-20.md"],
+            filesWithoutLastUpdated: 3,
+          },
+        }),
+        notice: null,
+      }));
+      const frame = app.lastFrame() ?? "";
+      expect(frame).toContain("staleness checks inactive");
+      expect(frame).toContain("Add last_updated: YYYY-MM-DD");
+      expect(frame).toContain("frontmatter to opt files in");
+      expect(frame).not.toContain("scaffold is fresh");
+      if (name === "Summary") {
+        expect(frame).toContain(ok ? "Heartbeat OK" : "Heartbeat Attention");
+      } else if (name === "HeartbeatPanel") {
+        if (ok) expect(frame).toContain("HEARTBEAT_OK");
+        else {
+          expect(frame).toContain("Memory cleanup is due.");
+          expect(frame).toContain("Old memory memory/2026-04-20.md");
+        }
+      } else {
+        expect(frame).toContain(ok ? "Scaffold looks healthy." : "Scaffold needs attention.");
+        expect(frame).toContain(ok ? "Heartbeat OK" : "Run `mex heartbeat` for details.");
+      }
+    });
+
+    it("preserves healthy output when staleness checks participate", () => {
+      const app = render(h(Component, { data: data(), notice: null }));
+      const frame = app.lastFrame() ?? "";
+      expect(frame).not.toContain("staleness checks inactive");
+      expect(frame).not.toContain("Add last_updated");
+      if (name === "Summary") expect(frame).toContain("Heartbeat OK");
+      if (name === "HeartbeatPanel") expect(frame).toContain("HEARTBEAT_OK · scaffold is fresh");
+      if (name === "DoctorPanel") expect(frame).toContain("Scaffold looks healthy.");
+    });
+  });
+
   it("renders drift warnings and errors in summary", () => {
     const app = render(h(Summary, {
       data: data({
