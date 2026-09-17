@@ -10,8 +10,9 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
+import { lstat as lstatAsync, open as openAsync } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import { isSameResolvedPath, resolveRealPath } from "../paths.js";
+import { isSameResolvedPath, resolveRealPath, resolveRealPathAsync } from "../paths.js";
 import { promisify } from "node:util";
 import type {
   GraphParseHealth,
@@ -50,6 +51,13 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_CHANGED_PATHS = 100;
 const MAX_FRESH_OBSERVATION_ATTEMPTS = 2;
+/**
+ * Source files one live-source pass reads at once. Every file still gets the
+ * full contained, identity-stable read; concurrency only overlaps the syscall
+ * latency between files. The bound also caps open descriptors and buffered
+ * file contents.
+ */
+const LIVE_SOURCE_READ_CONCURRENCY = 8;
 const MAX_SCHEMA_OBJECTS = 1_000;
 const MAX_METADATA_VALUE_BYTES = 4_096;
 const STATUS_METADATA_KEYS = Object.freeze([
@@ -470,7 +478,7 @@ async function inspectGraphStatusAttempt(
   const repo = await inspectRepoState(projectRoot, observedAt);
   const currentRepo = repo.state;
   diagnostics.push(...repo.diagnostics);
-  const live = inspectLiveSources(
+  const live = await inspectLiveSources(
     projectRoot,
     database.projectRootRealPath,
     maxChangedPaths,
@@ -1391,7 +1399,7 @@ async function validateFreshObservation(
   }
 
   const repo = await inspectRepoState(context.projectRoot, context.observedAt);
-  const live = inspectLiveSources(
+  const live = await inspectLiveSources(
     context.projectRoot,
     contained.database.projectRootRealPath,
     context.maxChangedPaths,
@@ -1775,6 +1783,77 @@ function readStableContainedUtf8File(
   }
 }
 
+/**
+ * Asynchronous twin of {@link readStableContainedUtf8File} for the concurrent
+ * live-source pass. It performs the same checks in the same order — lexical and
+ * resolved containment, regular non-symlink file, descriptor identity equal to
+ * the path identity, per-file size cap, then after the read an unchanged
+ * descriptor and a path that still resolves to the same regular file — and
+ * throws the same errors. Keep the two in lockstep.
+ */
+async function readStableContainedUtf8FileAsync(
+  projectRoot: string,
+  projectRootRealPath: string,
+  path: string,
+  afterRead?: () => void,
+): Promise<string> {
+  const absolutePath = resolve(projectRoot, path);
+  if (!isPathContained(projectRoot, absolutePath)) {
+    throw containedFileError(
+      "GRAPH_CONTAINED_FILE_OUTSIDE_PROJECT",
+      "The repository-relative path escapes the project root.",
+    );
+  }
+  const canonicalPath = await resolveRealPathAsync(absolutePath);
+  if (!isPathContained(projectRootRealPath, canonicalPath)) {
+    throw containedFileError(
+      "GRAPH_CONTAINED_FILE_OUTSIDE_PROJECT",
+      "The resolved file target escapes the project root.",
+    );
+  }
+  const before = await lstatAsync(canonicalPath);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw containedFileError(
+      "GRAPH_CONTAINED_FILE_INVALID",
+      "The resolved path is not a stable regular file.",
+    );
+  }
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  const handle = await openAsync(canonicalPath, constants.O_RDONLY | noFollow);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || databaseFileIdentity(opened) !== databaseFileIdentity(before)) {
+      throw containedFileError(
+        "GRAPH_CONTAINED_FILE_CHANGED",
+        "The resolved file changed before it could be read.",
+      );
+    }
+    if (!Number.isSafeInteger(opened.size)
+      || opened.size < 0
+      || opened.size > GRAPH_CORPUS_LIMITS.maxSourceFileBytes) {
+      throw new GraphCorpusLimitError("maxSourceFileBytes");
+    }
+    const content = await handle.readFile("utf8");
+    afterRead?.();
+    const after = await handle.stat();
+    const resolvedAfter = await resolveRealPathAsync(absolutePath);
+    const pathAfter = await lstatAsync(resolvedAfter);
+    if (databaseFileIdentity(opened) !== databaseFileIdentity(after)
+      || !isSameResolvedPath(resolvedAfter, canonicalPath)
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || databaseFileIdentity(opened) !== databaseFileIdentity(pathAfter)) {
+      throw containedFileError(
+        "GRAPH_CONTAINED_FILE_CHANGED",
+        "The repository path changed while it was being read.",
+      );
+    }
+    return content;
+  } finally {
+    await handle.close();
+  }
+}
+
 function assertSecurelyContainedMissingPath(
   projectRoot: string,
   projectRootRealPath: string,
@@ -1840,12 +1919,64 @@ function containedFileError(code: string, message: string): Error & { code: stri
   return Object.assign(new Error(message), { code });
 }
 
-function inspectLiveSources(
+type LiveSourceRead =
+  | { readonly ok: true; readonly bytes: number; readonly hash: string }
+  | { readonly ok: false; readonly error: unknown };
+
+/**
+ * Read every discovered source with at most {@link LIVE_SOURCE_READ_CONCURRENCY}
+ * reads in flight, keyed by position in `paths`.
+ *
+ * Paths are started strictly in order, so the started set is always a prefix.
+ * Scheduling stops once completed reads alone exceed `maxSourceBytes`: that
+ * total is a subset of the started prefix, so the in-order accounting in
+ * {@link inspectLiveSources} is guaranteed to breach the limit at or before the
+ * last started path and never needs a result that was not read. Work therefore
+ * stays bounded by the same limit plus the reads already in flight.
+ */
+async function readLiveSourcesConcurrently(
+  projectRoot: string,
+  projectRootRealPath: string,
+  paths: readonly string[],
+  afterSourceRead?: (path: string) => void,
+): Promise<Array<LiveSourceRead | undefined>> {
+  const results = new Array<LiveSourceRead | undefined>(paths.length);
+  let next = 0;
+  let completedBytes = 0;
+  let stopped = false;
+  const worker = async (): Promise<void> => {
+    while (!stopped && next < paths.length) {
+      const index = next++;
+      const path = paths[index]!;
+      try {
+        const content = await readStableContainedUtf8FileAsync(
+          projectRoot,
+          projectRootRealPath,
+          path,
+          () => afterSourceRead?.(path),
+        );
+        const bytes = Buffer.byteLength(content, "utf8");
+        results[index] = { ok: true, bytes, hash: sha256(content) };
+        completedBytes += bytes;
+        if (completedBytes > GRAPH_CORPUS_LIMITS.maxSourceBytes) stopped = true;
+      } catch (error) {
+        results[index] = { ok: false, error };
+      }
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(LIVE_SOURCE_READ_CONCURRENCY, paths.length) },
+    worker,
+  ));
+  return results;
+}
+
+async function inspectLiveSources(
   projectRoot: string,
   projectRootRealPath: string,
   diagnosticLimit: number,
   afterSourceRead?: (path: string) => void,
-): LiveSources {
+): Promise<LiveSources> {
   const diagnostics: Diagnostic[] = [];
   const hashes = new Map<string, string>();
   const discoveredPaths = new Set<string>();
@@ -1888,21 +2019,28 @@ function inspectLiveSources(
 
   let complete = true;
   let sourceBytes = 0;
-  for (const path of matches) {
+  const reads = await readLiveSourcesConcurrently(
+    projectRoot,
+    projectRootRealPath,
+    matches,
+    afterSourceRead,
+  );
+  // Account in sorted path order exactly as a sequential walk would, so
+  // hashes, skips, the corpus byte limit and diagnostic order do not depend on
+  // which read finished first.
+  for (const [index, path] of matches.entries()) {
     discoveredPaths.add(path);
     try {
-      const content = readStableContainedUtf8File(
-        projectRoot,
-        projectRootRealPath,
-        path,
-        () => afterSourceRead?.(path),
-      );
-      sourceBytes = addGraphCorpusBytes(
-        sourceBytes,
-        Buffer.byteLength(content, "utf8"),
-        "source",
-      );
-      hashes.set(path, sha256(content));
+      const read = reads[index];
+      if (!read) {
+        // Unreachable by construction (see readLiveSourcesConcurrently); fail
+        // closed as the corpus-wide limit rather than report a partial pass
+        // as complete.
+        throw new GraphCorpusLimitError("maxSourceBytes");
+      }
+      if (!read.ok) throw read.error;
+      sourceBytes = addGraphCorpusBytes(sourceBytes, read.bytes, "source");
+      hashes.set(path, read.hash);
     } catch (error) {
       // A file the bounded policy will not read for its own size is skipped by
       // indexing too, so the corpus observation stays complete and the walk

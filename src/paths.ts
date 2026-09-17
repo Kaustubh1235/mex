@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { sep } from "node:path";
 
 /**
@@ -31,6 +32,17 @@ export function toPosix(p: string): string {
  */
 export function resolveRealPath(path: string): string {
   return realpathSync.native(path);
+}
+
+/**
+ * Asynchronous form of {@link resolveRealPath} for reads that run concurrently.
+ *
+ * `fs.promises.realpath` is libuv's `uv_fs_realpath`, the same resolver as
+ * `realpathSync.native`, so results — including on-disk casing — match paths
+ * resolved by the synchronous form and the two may be compared.
+ */
+export function resolveRealPathAsync(path: string): Promise<string> {
+  return realpath(path);
 }
 
 /**

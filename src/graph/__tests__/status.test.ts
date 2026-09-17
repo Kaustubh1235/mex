@@ -1294,6 +1294,40 @@ describe("inspectGraphStatus", () => {
     expect(status.status).toBe("fresh");
   });
 
+  it("reports concurrently read live-source findings in sorted path order", async () => {
+    const root = temporaryRoot("mex-graph-concurrent-order-");
+    const externalRoot = temporaryRoot("mex-graph-concurrent-order-external-");
+    // More sources than one pass reads at once, with escapes spread across it.
+    const names = Array.from({ length: 24 }, (_, index) => `src/f${String(index).padStart(2, "0")}.ts`);
+    for (const [index, name] of names.entries()) {
+      source(root, name, `export const value${index} = ${index};\n`);
+    }
+    source(externalRoot, "outside.ts", "export const outside = 1;\n");
+    await build(root);
+    const escaped = [names[21]!, names[2]!, names[13]!, names[8]!];
+    for (const name of escaped) {
+      unlinkSync(join(root, name));
+      symlinkSync(join(externalRoot, "outside.ts"), join(root, name));
+    }
+    const read = new Set<string>();
+
+    const status = await inspectGraphStatus({
+      projectRoot: root,
+      now: NOW,
+      internal: {
+        afterSourceRead(path, pass) {
+          if (pass === "initial") read.add(path);
+        },
+      },
+    });
+
+    expect(status.status).not.toBe("fresh");
+    expect(status.diagnostics
+      .filter((diagnostic) => diagnostic.code === "GRAPH_SOURCE_PATH_OUTSIDE_PROJECT")
+      .map((diagnostic) => diagnostic.path)).toEqual([...escaped].sort());
+    expect([...read].sort()).toEqual(names.filter((name) => !escaped.includes(name)));
+  });
+
   it("suppresses every graph command when branch and rebuild findings coexist with an unsafe source", async () => {
     const root = temporaryRoot("mex-graph-unsafe-remediation-");
     const externalRoot = temporaryRoot("mex-graph-unsafe-remediation-external-");
