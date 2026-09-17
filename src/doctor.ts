@@ -8,8 +8,7 @@ import {
 } from "./drift/index.js";
 import { checkHeartbeat } from "./heartbeat.js";
 import { readEvents } from "./events.js";
-import { readStoredGraphCoverage } from "./graph/coverage.js";
-import type { GraphCoverageHistogram } from "./graph/corpus-policy.js";
+import { readStoredGraphCoverage, type GraphCoverageObservation } from "./graph/coverage.js";
 import {
   graphChangeDetail,
   graphPrimaryDiagnostic,
@@ -31,7 +30,7 @@ export async function runDoctor(config: MexConfig): Promise<void> {
 
   printLine("Drift", report.score >= 80 && errors === 0, `${report.score}/100 (${errors} errors, ${warnings} warnings)`);
   printLine("Graph", graph.status === "fresh", graphStatusDetail(graph));
-  printLine("Coverage", coverage?.total === 0 && !coverage.truncated, coverageDetail(coverage));
+  printLine("Coverage", coverage?.histogram.total === 0 && !coverage.histogram.truncated, coverageDetail(coverage));
   printLine("Heartbeat", heartbeat.ok, heartbeat.ok
     ? (heartbeat.filesWithoutLastUpdated
       ? "HEARTBEAT_OK (staleness checks inactive: no parseable last_updated dates)"
@@ -43,11 +42,12 @@ export async function runDoctor(config: MexConfig): Promise<void> {
 
   const graphNeedsAttention = graph.status !== "fresh";
   const graphRecoveryCommand = graphRemediationCommand(graph);
-  if (errors || warnings || !heartbeat.ok || graphNeedsAttention || (coverage?.total ?? 0) > 0) {
+  const unsupportedSources = (coverage?.histogram.total ?? 0) > 0;
+  if (errors || warnings || !heartbeat.ok || graphNeedsAttention || unsupportedSources) {
     console.log();
     console.log(chalk.bold("Next steps"));
     if (errors || warnings) console.log("  Run `mex check` for drift details, then `mex sync` for targeted repair prompts.");
-    if ((coverage?.total ?? 0) > 0) {
+    if (unsupportedSources) {
       console.log("  The listed extensions have no extractor; use source search for these languages or `mex graph --json` for the build coverage breakdown.");
     }
     if (graphNeedsAttention && graphRecoveryCommand) {
@@ -61,11 +61,13 @@ export async function runDoctor(config: MexConfig): Promise<void> {
   if (errors) process.exitCode = 1;
 }
 
-function coverageDetail(coverage: GraphCoverageHistogram | null): string {
-  if (!coverage) return "unknown (cached coverage unavailable or stale); run mex graph rebuild";
-  if (coverage.total === 0 && !coverage.truncated) return "all recognized source files are indexable";
+function coverageDetail(observation: GraphCoverageObservation | null): string {
+  if (!observation) return "unknown (no readable coverage observation); run mex graph rebuild";
+  const coverage = observation.histogram;
+  const age = observation.verified ? "" : " (as of the last graph build)";
+  if (coverage.total === 0 && !coverage.truncated) return `all recognized source files are indexable${age}`;
   const suffix = coverage.truncated ? ", walk stopped early" : "";
-  return `${coverage.total} source file(s) not indexable by any extractor: ${coverage.entries.slice(0, 10).map((entry) => `${entry.extension} (${entry.files})`).join(", ")}${suffix}`;
+  return `${coverage.total} source file(s) not indexable by any extractor: ${coverage.entries.slice(0, 10).map((entry) => `${entry.extension} (${entry.files})`).join(", ")}${suffix}${age}`;
 }
 
 function graphStatusDetail(graph: GraphAwareDriftReport["graphStatus"]): string {

@@ -1,9 +1,11 @@
 import fs from "node:fs";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureGraphCoverage, COVERAGE_CACHE_LIMITS, readGraphCoverage } from "../coverage.js";
+import {
+  captureGraphCoverage, COVERAGE_CACHE_LIMITS, readGraphCoverage, readGraphCoverageObservation,
+} from "../coverage.js";
 import type { SqliteDatabase } from "../db/sqlite.js";
 import {
   GRAPH_COVERAGE_LIMITS,
@@ -170,14 +172,70 @@ describe("build-time coverage cache", () => {
     }
   });
 
-  it("returns unknown when a directory cannot be observed or the observation cap is crossed", () => {
+  it("returns unknown when a directory cannot be observed", () => {
     const root = temporaryRoot();
     const denied = vi.spyOn(fs, "opendirSync").mockImplementation(() => { throw new Error("denied"); });
     try { expect(captureGraphCoverage(root)).toBe("null"); } finally { denied.mockRestore(); }
+  });
+
+  it("keeps build-time counts, unstamped, once the entry or directory budget is crossed", () => {
+    const root = temporaryRoot();
+    source(root, "a/one.go", "package a");
+    source(root, "b/two.vue", "<template />");
+    source(root, "c/three.go", "package c");
     const huge = vi.spyOn(fs, "opendirSync").mockImplementation(() => ({
       readSync: () => ({ name: "entry" }), closeSync: () => {},
     }) as unknown as fs.Dir);
-    try { expect(captureGraphCoverage(root)).toBe("null"); } finally { huge.mockRestore(); }
+    let raw: string;
+    try { raw = captureGraphCoverage(root); } finally { huge.mockRestore(); }
+    expect(JSON.parse(raw)).toMatchObject({ directories: [], histogram: { total: 3, truncated: false } });
+
+    raw = captureGraphCoverage(root, { ...COVERAGE_CACHE_LIMITS, directories: 2 });
+    expect(JSON.parse(raw)).toMatchObject({ directories: [], histogram: { total: 3, truncated: false } });
+    const observation = readGraphCoverageObservation(cachedDb(raw), root, { graphCurrent: true, verify: "always" });
+    // Counts past the budget can never verify, but they are not discarded.
+    expect(observation).toMatchObject({ verified: false, histogram: { total: 3 } });
+    expect(readGraphCoverage(cachedDb(raw), root, true)).toBeNull();
+  });
+
+  it("keeps counts as a last-build observation when an unrelated directory entry changes", () => {
+    const root = temporaryRoot();
+    source(root, "src/App.vue", "<template />");
+    source(root, "README.md", "# readme");
+    const raw = captureGraphCoverage(root);
+    expect(readGraphCoverageObservation(cachedDb(raw), root, { graphCurrent: true, verify: "always" }))
+      .toMatchObject({ verified: true, histogram: { total: 1 } });
+    // An editor's atomic save: write a temporary file, then rename it over the original.
+    writeFileSync(join(root, "README.md.tmp"), "# readme v2");
+    renameSync(join(root, "README.md.tmp"), join(root, "README.md"));
+    expect(readGraphCoverageObservation(cachedDb(raw), root, { graphCurrent: true, verify: "always" }))
+      .toMatchObject({ verified: false, histogram: { total: 1, entries: [{ extension: ".vue", files: 1 }] } });
+    expect(readGraphCoverageObservation(cachedDb(raw), root, { graphCurrent: false, verify: "always" }))
+      .toMatchObject({ verified: false, histogram: { total: 1 } });
+  });
+
+  it("verifies stamps with lstat alone, never realpath, on reads", () => {
+    const root = temporaryRoot();
+    source(root, "src/deep/main.go", "package main");
+    const raw = captureGraphCoverage(root);
+    const realpath = vi.spyOn(fs, "realpathSync").mockImplementation(() => { throw new Error("read-time realpath"); });
+    try {
+      expect(readGraphCoverage(cachedDb(raw), root, true)?.total).toBe(1);
+    } finally { realpath.mockRestore(); }
+  });
+
+  it("skips directory stamps entirely when nothing would be reported", () => {
+    const root = temporaryRoot();
+    source(root, "src/api.ts", "export const api = 1;");
+    const raw = captureGraphCoverage(root);
+    const lstat = vi.spyOn(fs, "lstatSync");
+    try {
+      expect(readGraphCoverageObservation(cachedDb(raw), root, { graphCurrent: true, verify: "when-reported" }))
+        .toMatchObject({ histogram: { total: 0, truncated: false } });
+      expect(lstat).not.toHaveBeenCalled();
+      readGraphCoverageObservation(cachedDb(raw), root, { graphCurrent: true, verify: "always" });
+      expect(lstat).toHaveBeenCalled();
+    } finally { lstat.mockRestore(); }
   });
 
   it("drops schema and shell extension noise", () => {

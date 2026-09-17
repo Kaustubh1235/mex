@@ -51,10 +51,11 @@ describe("graph CLI cached coverage", () => {
       expect(fullyCovered.at(-1)).toMatchObject({ status: "ok", warnings: [] });
       mkdirSync(join(root, "nested"));
       writeFileSync(join(root, "nested", "App.vue"), "<template />");
-      const unknown: Record<string, unknown>[] = [];
-      runGraphScope("api", root, { write: (line) => unknown.push(JSON.parse(line)) });
-      expect(unknown.at(-1)).toMatchObject({ status: "ok" });
-      expect(unknown.at(-1)?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("coverage is unknown")]));
+      // A fully covered build records nothing to report, so reads skip verification:
+      // the new file stays silent until the next build, exactly as before coverage existed.
+      const afterAddition: Record<string, unknown>[] = [];
+      runGraphScope("checkout cart pricing", root, { write: (line) => afterAddition.push(JSON.parse(line)) });
+      expect(afterAddition.at(-1)).toMatchObject({ status: "no-match", warnings: [] });
       for (const command of [runGraph, runGraphRefresh, runGraphRebuild]) {
         output.length = 0;
         await command({ root, json: true });

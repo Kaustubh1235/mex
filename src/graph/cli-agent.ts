@@ -5,7 +5,10 @@ import { graphManifest, graphManifestDiffersOnlyByConfig } from "./engine-impl.j
 import type { GraphEngine, GraphNeighbor, IndexedFileInfo } from "./engine.js";
 import type { SqliteDatabase } from "./db/sqlite.js";
 import { isSupportedSourceFile, SUPPORTED_SOURCE_GLOB } from "./extraction/index.js";
-import { coverageFields, hasGraphCoverageCache, readGraphCoverage } from "./coverage.js";
+import {
+  coverageFields, coverageReportable, hasGraphCoverageCache, readGraphCoverageObservation,
+  type GraphCoverageObservation,
+} from "./coverage.js";
 import type { GraphEdge, GraphNode } from "./types.js";
 import {
   compactFact, groupByFile, planFileSource, readNodeSource, selectScope, sourceHash,
@@ -697,14 +700,24 @@ export function runGraphScope(
     if (textFallbackFiles.length > 0) truncated = true;
     const materiallyReliesOnTextOnly = textFallbackFiles.length > 0
       && !hasTrustworthyGraphPrimary;
-    const coverage = readGraphCoverage(session.db, rootDir,
-      staleFiles.length === 0 && unindexedFiles.length === 0 && health.failedFiles === 0
-        && health.partialFiles === 0 && !session.degradations?.length);
-    const coverageUnknown = coverage === null && hasGraphCoverageCache(session.db);
-    const coverageIncomplete = coverage !== null && (coverage.total > 0 || coverage.truncated);
+    // Unsupported languages can only explain an answer that is weak or empty.
+    // Repositories that parse many languages keep fixtures in all of them, and
+    // flagging every strong answer there would send agents narrowing tasks the
+    // graph already answered; `status` stays about this task's evidence.
+    const coverageMayExplainGap = selection.evidenceStrength !== "strong" || materiallyReliesOnTextOnly;
+    // Parse health says nothing about which languages exist, so only drift in
+    // the indexed corpus itself stops coverage from verifying as current.
+    const coverage = coverageMayExplainGap
+      ? readGraphCoverageObservation(session.db, rootDir, {
+        graphCurrent: staleFiles.length === 0 && unindexedFiles.length === 0 && !session.degradations?.length,
+        verify: "when-reported",
+      })
+      : null;
+    const coverageUnknown = coverageMayExplainGap && coverage === null && hasGraphCoverageCache(session.db);
+    const coverageIncomplete = coverage !== null && coverageReportable(coverage.histogram);
     const warnings = [
-      ...(coverageUnknown ? ["Graph coverage is unknown: its cached observation is unavailable or stale; use source search or run mex graph rebuild."] : []),
-      ...(coverageIncomplete ? [`Graph coverage excludes ${coverage.truncated ? "at least " : ""}${coverage!.total} recognized source file(s) with unsupported extensions (${coverage!.entries.map((entry) => `${entry.extension}: ${entry.files}`).join(", ")}); use source search for these languages.`] : []),
+      ...(coverageUnknown ? ["Graph coverage is unknown: its cached observation is unreadable; use source search or run mex graph rebuild."] : []),
+      ...(coverageIncomplete ? [coverageWarning(coverage!)] : []),
       ...(health.failedFiles > 0 ? [`${health.failedFiles} indexed file(s) have failed structural parsing.`] : []),
       ...(health.partialFiles > 0 ? [`${health.partialFiles} indexed file(s) have partial structural parsing.`] : []),
       ...(staleFiles.length > 0
@@ -726,7 +739,7 @@ export function runGraphScope(
     const status = returnedFiles.length === 0 && facts.length === 0 && flowRecords.length === 0
       ? "no-match"
       : highPriorityEvidenceOmitted ? "partial"
-        : materiallyReliesOnTextOnly || coverageIncomplete ? "degraded"
+        : materiallyReliesOnTextOnly ? "degraded"
           : "ok";
     const suggestions = status === "partial" && facts.length > 0
       ? [`mex graph get ${facts[0]!.node.id} --detail source`] : [];
@@ -2548,11 +2561,26 @@ function liveUnindexedFiles(indexedFiles: IndexedFileInfo[], rootDir: string): s
  */
 function targetNotFoundCoverage(session: AgentGraphSession, rootDir: string): Record<string, unknown> {
   const indexedFiles = session.graph.getIndexedFiles?.() ?? [];
-  const coverage = readGraphCoverage(session.db, rootDir,
-    !session.degradations?.length && !session.driftedSources?.length
-      && (!session.graphStatus || session.graphStatus.status === "fresh"));
-  if ((!coverage || (coverage.total === 0 && !coverage.truncated)) && indexedFiles.length > 0) return {};
-  return { filesIndexed: indexedFiles.length, ...coverageFields(coverage) };
+  const coverage = readGraphCoverageObservation(session.db, rootDir, {
+    graphCurrent: !session.degradations?.length && !session.driftedSources?.length
+      && (!session.graphStatus || session.graphStatus.status === "fresh"),
+    verify: "when-reported",
+  });
+  // An unreadable observation must not fall back to the bare record: that is
+  // the "a miss looks like a typo" answer this context exists to prevent.
+  const unknown = coverage === null && hasGraphCoverageCache(session.db) ? { coverage: "unknown" } : {};
+  if ((!coverage || !coverageReportable(coverage.histogram)) && indexedFiles.length > 0) return unknown;
+  return { filesIndexed: indexedFiles.length, ...unknown, ...coverageFields(coverage) };
+}
+
+/** Counts not re-verified since the build are still named, with their age stated. */
+function coverageWarning(coverage: GraphCoverageObservation): string {
+  const { histogram } = coverage;
+  const breakdown = histogram.entries.map((entry) => `${entry.extension}: ${entry.files}`).join(", ");
+  const count = `${histogram.truncated ? "at least " : ""}${histogram.total}`;
+  return coverage.verified
+    ? `Graph coverage excludes ${count} recognized source file(s) with unsupported extensions (${breakdown}); use source search for these languages.`
+    : `Graph coverage excluded ${count} recognized source file(s) with unsupported extensions at the last graph build (${breakdown}); use source search for these languages.`;
 }
 
 function nodeRef(node: GraphNode): Record<string, string | number> {

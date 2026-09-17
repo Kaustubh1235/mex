@@ -9,8 +9,7 @@ import {
   type GraphMaintenanceResult,
 } from "./maintenance.js";
 import { inspectGraphStatus } from "./status.js";
-import type { GraphCoverageHistogram } from "./corpus-policy.js";
-import { coverageFields, readStoredGraphCoverage } from "./coverage.js";
+import { coverageFields, readStoredGraphCoverage, type GraphCoverageObservation } from "./coverage.js";
 
 export interface GraphCommandOptions {
   /** Project root to inspect or maintain (defaults to cwd). */
@@ -94,8 +93,10 @@ export async function runGraph(options: GraphCommandOptions = {}): Promise<void>
  * a typo gets. Absent when the histogram found nothing, so existing outputs
  * (and every script consuming them) are unchanged for fully supported repos.
  */
-function printUnindexedSources(coverage: GraphCoverageHistogram | null): void {
-  if (!coverage || (coverage.total === 0 && !coverage.truncated)) return;
+function printUnindexedSources(observation: GraphCoverageObservation | null): void {
+  // A zero count, even one flagged as stopped early, names nothing to act on.
+  if (!observation || observation.histogram.total === 0) return;
+  const coverage = observation.histogram;
   const shown = coverage.entries.slice(0, MAX_SKIPPED_PATHS_SHOWN);
   const breakdown = shown.map((entry) => `${entry.extension} (${entry.files})`).join(", ");
   console.log(

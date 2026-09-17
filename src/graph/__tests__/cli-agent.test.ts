@@ -1393,16 +1393,41 @@ describe("runGraphQuery", () => {
         filesIndexed: 1,
         unindexedSources: { total: 2, byExtension: { ".go": 1, ".svelte": 1 }, truncated: false },
       });
-      const scope = capture(() => runGraphScope("fetchOrders", mixedRoot, mixedDeps, {}));
-      expect(scope.at(-1)).toMatchObject({ status: "degraded" });
-      expect(scope.at(-1)?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("unsupported extensions")]));
-      expect(scope.find((record) => record.type === "health")).not.toHaveProperty("unindexedSources");
+      const coverageWarnings = (records: Record<string, unknown>[]) => ((records.at(-1)?.warnings ?? []) as string[])
+        .filter((warning) => warning.includes("coverage"));
+
+      // A strong graph answer is not explained by other languages: status and warnings stay about the task.
+      const strong = capture(() => runGraphScope("fetchOrders", mixedRoot, mixedDeps, {}));
+      expect(strong.at(-1)).toMatchObject({ status: "ok", evidenceStrength: "strong" });
+      expect(coverageWarnings(strong)).toEqual([]);
+      expect(strong.find((record) => record.type === "health")).not.toHaveProperty("unindexedSources");
+      // A weaker answer may be explained by them: warn, but status still describes the returned evidence.
+      const moderate = capture(() => runGraphScope("orders pagination retry backoff", mixedRoot, mixedDeps, {}));
+      expect(moderate.at(-1)).toMatchObject({ status: "ok", evidenceStrength: "moderate" });
+      expect(coverageWarnings(moderate)).toEqual([expect.stringContaining("unsupported extensions")]);
+      // An empty answer may well be explained by them, so it names them without changing status.
+      const empty = capture(() => runGraphScope("checkout cart pricing", mixedRoot, mixedDeps, {}));
+      expect(empty.at(-1)).toMatchObject({ status: "no-match" });
+      expect(coverageWarnings(empty)).toEqual([expect.stringContaining("excludes 2 recognized source file(s) with unsupported extensions")]);
+
+      // A new file changes the directory stamp: counts survive, labeled with their age.
       writeFileSync(join(mixedRoot, "new.vue"), "<template />");
-      const stale = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
-      expect(stale.find((record) => record.code === "TARGET_NOT_FOUND")).not.toHaveProperty("unindexedSources");
-      const unknownScope = capture(() => runGraphScope("fetchOrders", mixedRoot, mixedDeps, {}));
-      expect(unknownScope.at(-1)).toMatchObject({ status: "ok" });
-      expect(unknownScope.at(-1)?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("coverage is unknown")]));
+      const changed = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
+      expect(changed.find((record) => record.code === "TARGET_NOT_FOUND")).toMatchObject({
+        filesIndexed: 1,
+        unindexedSources: { total: 2, byExtension: { ".go": 1, ".svelte": 1 }, truncated: false, observedAt: "last-build" },
+      });
+      const changedScope = capture(() => runGraphScope("checkout cart pricing", mixedRoot, mixedDeps, {}));
+      expect(coverageWarnings(changedScope)).toEqual([expect.stringContaining("at the last graph build")]);
+
+      // Unreadable metadata is unknown, never silently bare.
+      db.prepare("UPDATE project_metadata SET value = '{' WHERE key = 'unindexed_source_coverage'").run();
+      const unknown = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
+      const unknownError = unknown.find((record) => record.code === "TARGET_NOT_FOUND");
+      expect(unknownError).toMatchObject({ coverage: "unknown" });
+      expect(unknownError).not.toHaveProperty("unindexedSources");
+      const unknownScope = capture(() => runGraphScope("checkout cart pricing", mixedRoot, mixedDeps, {}));
+      expect(coverageWarnings(unknownScope)).toEqual([expect.stringContaining("coverage is unknown")]);
     } finally {
       db?.close();
       mixedEngine?.close();
