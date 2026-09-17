@@ -266,6 +266,46 @@ describe("built CLI main-module guard", () => {
     await yieldToVitestRpc();
   });
 
+  it("renders --format md through the built CLI and keeps default and JSON bytes", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "mex-timeline-md-cli-"));
+    try {
+      mkdirSync(join(fixture, ".mex", "events"), { recursive: true });
+      writeFileSync(join(fixture, ".mex", "ROUTER.md"), "# Fixture\n");
+      writeFileSync(join(fixture, ".mex", "events", "decisions.jsonl"), `${JSON.stringify({
+        timestamp: "2026-05-14T00:00:00.000Z", kind: "note", message: "chose bounded output", files: ["src/events.ts"], cwd: ".",
+      })}\n`);
+      const invoke = (...args: string[]) => {
+        const result = spawnSync(process.execPath, [cliPath, "timeline", ...args], {
+          cwd: fixture,
+          encoding: "utf8",
+          // Bound the child so a hung timeline fails with diagnostics
+          // instead of hanging the worker.
+          timeout: 30_000,
+          env: { ...process.env, HOME: fixture, MEX_TELEMETRY: "0", DO_NOT_TRACK: "1", NO_COLOR: "1", FORCE_COLOR: "0" },
+        });
+        const detail = result.error ? String(result.error) : result.stderr;
+        expect(result.error, detail).toBeUndefined();
+        expect(result.signal, detail).toBeNull();
+        expect(result.status, detail).toBe(0);
+        return result.stdout;
+      };
+      const expectedJson = `${JSON.stringify({
+        events: [{ timestamp: "2026-05-14T00:00:00.000Z", kind: "note", message: "chose bounded output", files: ["src/events.ts"], cwd: "." }],
+        truncated: false,
+        sourceTruncated: false,
+      }, null, 2)}\n`;
+      expect(invoke("--json")).toBe(expectedJson);
+      expect(invoke("--json", "--format", "md")).toBe(expectedJson);
+      expect(invoke()).toBe("2026-05-14 note chose bounded output (src/events.ts)\n");
+      const markdown = invoke("--format", "md");
+      expect(markdown).toContain("| Date | Type | Event | Files |");
+      expect(markdown).toContain("chose bounded output");
+      expect(markdown).toContain("`src/events.ts`");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  }, 135_000);
+
   it("parses argv when invoked through a symlinked bin (npm/npx layout)", () => {
     const binDir = mkdtempSync(join(tmpdir(), "mex-bin-"));
     const symlinkedCli = join(binDir, "mex");
