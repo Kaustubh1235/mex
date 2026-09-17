@@ -241,6 +241,22 @@ export interface InspectGraphStatusOptions {
    * cached or written: the caller carries it for one read.
    */
   auditedDatabase?: Pick<InternalGraphFreshObservationToken, "canonicalDbPath" | "databaseIdentity">;
+  /**
+   * @internal Which persisted-structure audit this inspection runs.
+   *
+   * `"full"` (the default) runs SQLite's quick-check, every relational and
+   * full-text invariant, and the fingerprint/LSH audit. `"graph"` skips only
+   * the fingerprint/LSH audit — the walk that recomputes every stored band
+   * hash, and most of the audit's cost on a large store.
+   *
+   * Only a read whose output never touches `node_fingerprints` or
+   * `lsh_buckets` may ask for `"graph"`: a targeted graph read that does not
+   * request serialized fingerprints. Such a read still refuses when anything
+   * its answer depends on fails the audit, but it will answer from a store whose only
+   * damage is in fingerprint/LSH rows it does not read, while `graph status`,
+   * grounding (`mex check`) and the Hub keep reporting that store as corrupt.
+   */
+  structuralAudit?: "full" | "graph";
   /** @internal Deterministic observation-race seam for conformance tests. */
   internal?: {
     beforeFreshValidation?: (attempt: number) => void | Promise<void>;
@@ -762,7 +778,9 @@ async function inspectGraphStatusAttempt(
         }));
     }
 
-    const coreInvariantFailures = structureAudited ? [] : inspectCoreInvariants(db);
+    const coreInvariantFailures = structureAudited ? [] : inspectCoreInvariants(db, {
+      fingerprints: context.options.structuralAudit !== "graph",
+    });
     if (coreInvariantFailures.length > 0) {
       diagnostics.push({
         code: "GRAPH_INDEX_INVARIANT_FAILED",
@@ -2276,7 +2294,10 @@ function inspectRequiredSchema(db: SqliteDatabase): string[] {
   return failures.sort(compareCodePoints);
 }
 
-function inspectCoreInvariants(db: SqliteDatabase): string[] {
+function inspectCoreInvariants(
+  db: SqliteDatabase,
+  scope: { readonly fingerprints: boolean },
+): string[] {
   const checks: ReadonlyArray<readonly [string, string]> = [
     ["duplicate edge group(s)", `
       SELECT COUNT(*) AS count FROM (
@@ -2379,7 +2400,7 @@ function inspectCoreInvariants(db: SqliteDatabase): string[] {
     const count = readCount(db, sql);
     if (count > 0) failures.push(`${count} ${label}`);
   }
-  failures.push(...inspectFingerprintInvariants(db));
+  if (scope.fingerprints) failures.push(...inspectFingerprintInvariants(db));
   return failures.sort(compareCodePoints);
 }
 

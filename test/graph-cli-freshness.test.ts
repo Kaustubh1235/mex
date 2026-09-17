@@ -28,6 +28,7 @@ import {
 import { openSqlite } from "../src/graph/db/sqlite.js";
 import { createGraphEngine } from "../src/graph/engine-impl.js";
 import {
+  loadFreshGraphReadSession,
   openImmutableGraphReadSession,
   openImmutableGraphReadSessionSync,
 } from "../src/graph/read-session.js";
@@ -186,6 +187,53 @@ describe("agent graph freshness-bound readers", () => {
     expect(JSON.stringify(records)).not.toContain("return \\\"new\\\"");
   });
 
+  it("answers targeted reads without the fingerprint option when only fingerprint/LSH rows are damaged", async () => {
+    const built = await fixture("mex-cli-lsh-damage-");
+    corruptDatabase(built.dbPath, "INSERT INTO lsh_buckets (band, band_hash, ref) VALUES (0, 0, 9999999)");
+
+    // The store is still corrupt to everything that audits fingerprints.
+    const status = await inspectGraphStatusWithFreshObservation({ projectRoot: built.root });
+    expect(status.graphStatus.status).toBe("corrupt");
+
+    const get = await capture((deps) => runGraphGet([built.nodeId], built.root, deps));
+    const query = await capture((deps) => runGraphQuery("where-defined", "stableFact", built.root, deps));
+    const impact = await capture((deps) => runImpact("stableFact", built.root, deps));
+    for (const records of [get, query, impact]) {
+      expect(records.some((record) => record.type === "error")).toBe(false);
+      expect(JSON.stringify(records)).toContain("stableFact");
+    }
+  });
+
+  it("keeps the fingerprint/LSH audit for fingerprint reads and default read sessions", async () => {
+    const built = await fixture("mex-cli-lsh-damage-full-");
+    corruptDatabase(built.dbPath, "INSERT INTO lsh_buckets (band, band_hash, ref) VALUES (0, 0, 9999999)");
+
+    expectUnavailableOnly(await capture((deps) => runGraphGet(
+      [built.nodeId], built.root, deps, { fingerprint: true },
+    )));
+    expectUnavailableOnly(await capture((deps) => runGraphQuery(
+      "where-defined", "stableFact", built.root, deps, { fingerprint: true },
+    )));
+    expectUnavailableOnly(await capture((deps) => runImpact(
+      "stableFact", built.root, deps, { fingerprint: true },
+    )));
+    // Grounding (`mex check`) and the Hub load sessions with the default audit.
+    const loaded = await loadFreshGraphReadSession(built.root, { loadSession: true });
+    expect(loaded.graphStatus.status).toBe("corrupt");
+    expect(loaded.session).toBeNull();
+  });
+
+  it("still refuses a targeted read when a relational invariant its answer depends on fails", async () => {
+    const built = await fixture("mex-cli-dangling-edge-");
+    corruptDatabase(
+      built.dbPath,
+      `INSERT INTO edges (source, target, kind) VALUES ('${built.nodeId}', 'function:missing-target', 'calls')`,
+    );
+
+    expectUnavailableOnly(await capture((deps) => runGraphGet([built.nodeId], built.root, deps)));
+    expectUnavailableOnly(await capture((deps) => runGraphQuery("who-calls", "stableFact", built.root, deps)));
+  });
+
   it("hands only the bound database identity to the final freshness inspection", async () => {
     const built = await fixture("mex-cli-audited-identity-");
     const output: string[] = [];
@@ -228,13 +276,14 @@ describe("agent graph freshness-bound readers", () => {
         },
       },
       beforeFinalFreshnessValidation() {
-        // An LSH bucket with no fingerprint: a structural fault only the audit
-        // can see, written in place so the path stays the same.
+        // A dangling edge: a structural fault only the audit can see, of the
+        // relational kind a targeted read's audit always covers, written in
+        // place so the path stays the same.
         const writer = openSqlite(built.dbPath);
         try {
           writer.exec("PRAGMA foreign_keys = OFF");
-          writer.prepare("INSERT INTO lsh_buckets (band, band_hash, ref) VALUES (?, ?, ?)")
-            .run(0, 0n, 9_999_999n);
+          writer.prepare("INSERT INTO edges (source, target, kind) VALUES (?, ?, ?)")
+            .run(built.nodeId, "function:missing-target", "calls");
         } finally {
           writer.close();
         }
@@ -522,6 +571,17 @@ describe("agent graph freshness-bound readers", () => {
     unlinkSync(manifestPath);
   });
 });
+
+function corruptDatabase(dbPath: string, statement: string): void {
+  const db = openSqlite(dbPath);
+  try {
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.exec(statement);
+  } finally {
+    db.close();
+  }
+  removeEmptySidecars(dbPath);
+}
 
 function removeEmptySidecars(dbPath: string): void {
   for (const suffix of ["-wal", "-shm"]) {

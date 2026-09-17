@@ -98,6 +98,12 @@ export interface LoadFreshGraphReadSessionOptions {
    * receive one.
    */
   allowDegradedReads?: boolean;
+  /**
+   * Persisted-structure audit for both freshness inspections of this read.
+   * Omit for the full audit. Pass `"graph"` only when the caller's output never
+   * reads fingerprint or LSH rows; see `InspectGraphStatusOptions`.
+   */
+  structuralAudit?: "full" | "graph";
   inspectObservation?: typeof inspectGraphStatusWithFreshObservation;
   inspectSidecars?: typeof inspectGraphSidecars;
   afterStatusInspection?: (
@@ -365,7 +371,8 @@ export async function loadFreshGraphReadSession(
 ): Promise<InternalFreshGraphReadResult> {
   const dbPath = options.dbPath ?? resolve(projectRoot, ".mex", "graph.db");
   const inspectObservation = options.inspectObservation ?? inspectGraphStatusWithFreshObservation;
-  const inspection = await inspectObservation({ projectRoot, dbPath });
+  const audit = options.structuralAudit ? { structuralAudit: options.structuralAudit } : {};
+  const inspection = await inspectObservation({ projectRoot, dbPath, ...audit });
   await options.afterStatusInspection?.(inspection);
   const { graphStatus } = inspection;
   const degraded = graphStatus.status !== "fresh"
@@ -442,6 +449,7 @@ export async function loadFreshGraphReadSession(
         const finalInspection = await inspectObservation({
           projectRoot,
           dbPath,
+          ...audit,
           auditedDatabase: {
             canonicalDbPath: freshObservation.canonicalDbPath,
             databaseIdentity: freshObservation.databaseIdentity,

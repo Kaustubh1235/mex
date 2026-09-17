@@ -81,7 +81,7 @@ export function runImpact(
 ): void | Promise<void> {
   const output = deps.write ?? console.log;
   const opts = resolveOptions(rawOptions);
-  return withAgentGraphSession(rootDir, deps, output, "fresh", (session, write) => {
+  return withAgentGraphSession(rootDir, deps, output, freshTargetedRead(opts), (session, write) => {
     const fileNodes = nodesForFile(session, rootDir, target);
     const roots = fileNodes.length > 0 ? fileNodes : resolveSymbol(session.graph, target);
     if (roots.length === 0) {
@@ -185,7 +185,7 @@ export function runGraphQuery(
     return;
   }
   const opts = resolveOptions(rawOptions);
-  return withAgentGraphSession(rootDir, deps, output, "fresh", (session, write) => {
+  return withAgentGraphSession(rootDir, deps, output, freshTargetedRead(opts), (session, write) => {
     const nodes = resolveSymbol(session.graph, target);
     if (nodes.length === 0) {
       if (relation === "who-calls"
@@ -790,7 +790,7 @@ export function runGraphGet(
 ): void | Promise<void> {
   const output = deps.write ?? console.log;
   const opts = resolveOptions({ ...rawOptions, detail: "source" });
-  return withAgentGraphSession(rootDir, deps, output, "fresh", (session, write) => {
+  return withAgentGraphSession(rootDir, deps, output, freshTargetedRead(opts), (session, write) => {
     const ctx = beginResponse("graph get", { ...opts, maxNodes: ids.length, maxFlowSteps: 0 }, undefined, []);
     const { ledger, meta } = ctx;
 
@@ -1921,7 +1921,11 @@ function scopeEdgeKey(edge: Pick<GraphEdge, "source" | "target" | "kind" | "line
   return `${edge.source}\0${edge.target}\0${edge.kind}\0${edge.line ?? -1}\0${edge.column ?? -1}`;
 }
 
-type AgentSessionMode = "stable" | "fresh";
+interface FreshSessionMode {
+  readonly kind: "fresh";
+  readonly structuralAudit: "full" | "graph";
+}
+type AgentSessionMode = "stable" | FreshSessionMode;
 type AgentSessionTask = (session: AgentGraphSession, write: (line: string) => void) => void;
 
 interface AgentCommandInternalHooks {
@@ -1945,7 +1949,7 @@ function withAgentGraphSession(
   rootDir: string,
   deps: AgentCommandDeps,
   write: (line: string) => void,
-  mode: "fresh",
+  mode: FreshSessionMode,
   task: AgentSessionTask,
 ): void | Promise<void>;
 function withAgentGraphSession(
@@ -1960,7 +1964,21 @@ function withAgentGraphSession(
   // not acquire filesystem/Git behavior they did not request.
   if (deps.open) return runInjectedAgentSession(rootDir, deps.open, write, task);
   if (mode === "stable") return runScopeAgentSession(rootDir, write, task);
-  return runFreshAgentSession(rootDir, deps as AgentCommandInternalDeps, write, task);
+  return runFreshAgentSession(rootDir, deps as AgentCommandInternalDeps, write, task, mode.structuralAudit);
+}
+
+/**
+ * The freshness-bound session for a targeted read (query, get, impact).
+ *
+ * These reads touch fingerprint rows only when the `fingerprint` option asks
+ * for them, and never read LSH buckets, so only then do they pay for the
+ * fingerprint/LSH audit. (The CLI offers `--fingerprint` only on `graph scope`,
+ * which runs no audit; programmatic callers may still pass the option here.)
+ * Every relational and full-text invariant their answer depends on is audited
+ * either way.
+ */
+function freshTargetedRead(opts: AgentOptions): FreshSessionMode {
+  return { kind: "fresh", structuralAudit: opts.fingerprint ? "full" : "graph" };
 }
 
 function runInjectedAgentSession(
@@ -2045,6 +2063,7 @@ async function runFreshAgentSession(
   deps: AgentCommandInternalDeps,
   write: (line: string) => void,
   task: AgentSessionTask,
+  structuralAudit: "full" | "graph",
 ): Promise<void> {
   let session: AgentGraphSession | null = null;
   const pending: string[] = [];
@@ -2055,6 +2074,7 @@ async function runFreshAgentSession(
       dbPath,
       loadSession: true,
       allowDegradedReads: true,
+      structuralAudit,
     });
     if (!loaded.session) {
       graphStatusUnavailable(write, loaded.graphStatus, undefined, loaded.configDriftTolerated);
