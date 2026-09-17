@@ -12,7 +12,11 @@ export default defineConfig([
     target: "node20",
     outDir: "dist",
     clean: true,
-    splitting: false,
+    // Split so modules reached only through dynamic import() — the Ink TUI,
+    // React, the TypeScript compiler — stay in their own chunks. With one
+    // bundle, esbuild hoists every external import to the top of cli.js and
+    // each command, even --version, paid to load them.
+    splitting: true,
     sourcemap: true,
     dts: false,
     // Hub contracts are a private workspace package and are intentionally
