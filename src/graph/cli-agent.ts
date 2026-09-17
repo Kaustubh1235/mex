@@ -726,7 +726,7 @@ export function runGraphScope(
     const status = returnedFiles.length === 0 && facts.length === 0 && flowRecords.length === 0
       ? "no-match"
       : highPriorityEvidenceOmitted ? "partial"
-        : materiallyReliesOnTextOnly || coverageIncomplete || coverageUnknown ? "degraded"
+        : materiallyReliesOnTextOnly || coverageIncomplete ? "degraded"
           : "ok";
     const suggestions = status === "partial" && facts.length > 0
       ? [`mex graph get ${facts[0]!.node.id} --detail source`] : [];

@@ -53,7 +53,7 @@ describe("graph CLI cached coverage", () => {
       writeFileSync(join(root, "nested", "App.vue"), "<template />");
       const unknown: Record<string, unknown>[] = [];
       runGraphScope("api", root, { write: (line) => unknown.push(JSON.parse(line)) });
-      expect(unknown.at(-1)).toMatchObject({ status: "degraded" });
+      expect(unknown.at(-1)).toMatchObject({ status: "ok" });
       expect(unknown.at(-1)?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("coverage is unknown")]));
       for (const command of [runGraph, runGraphRefresh, runGraphRebuild]) {
         output.length = 0;

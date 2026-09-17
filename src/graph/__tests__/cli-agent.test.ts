@@ -1401,7 +1401,7 @@ describe("runGraphQuery", () => {
       const stale = capture(() => runGraphQuery("where-defined", "refreshOrders", mixedRoot, mixedDeps, {}));
       expect(stale.find((record) => record.code === "TARGET_NOT_FOUND")).not.toHaveProperty("unindexedSources");
       const unknownScope = capture(() => runGraphScope("fetchOrders", mixedRoot, mixedDeps, {}));
-      expect(unknownScope.at(-1)).toMatchObject({ status: "degraded" });
+      expect(unknownScope.at(-1)).toMatchObject({ status: "ok" });
       expect(unknownScope.at(-1)?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("coverage is unknown")]));
     } finally {
       db?.close();
