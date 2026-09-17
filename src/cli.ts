@@ -914,6 +914,7 @@ program
   .command("timeline")
   .description("Read bounded recent project notes (latest 8 MiB / 10,000 log lines)")
   .option("--json", "Output events as JSON")
+  .option("--format <format>", "Output format: md for a Markdown table (piped into reports)")
   .option("--since <date>", "Filter from YYYY-MM-DD or relative Nd, e.g. 30d")
   .option("--type <type>", "Filter by event type: decision, note, risk, todo")
   .option("--query <text>", "Case-insensitive literal text in the message (max 256 UTF-8 bytes)")
@@ -930,6 +931,7 @@ program
       const { runTimeline } = await import("./events.js");
       await runTimeline(config, {
         json: opts.json,
+        format: opts.format,
         since: opts.since,
         kind: opts.type,
         query: opts.query,

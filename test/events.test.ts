@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
+import type { Table } from "mdast";
 import { appendEvent, runLog, readEvents, runTimeline, type EventEntry, type TimelineOpts } from "../src/events.js";
 import type { MexConfig } from "../src/types.js";
 
@@ -35,6 +39,111 @@ async function timeline(opts: TimelineOpts = {}) {
   spy.mockRestore();
   return { output, result: JSON.parse(output) as { events: EventEntry[]; truncated: boolean; sourceTruncated: boolean } };
 }
+
+async function markdown(opts: TimelineOpts = {}) {
+  const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    await runTimeline(config, { ...opts, format: "md" });
+    return spy.mock.calls.map((call) => `${call[0]}\n`).join("");
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+function parsedRows(output: string) {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(output);
+  const tables = tree.children.filter((node): node is Table => node.type === "table");
+  expect(tables).toHaveLength(1);
+  const rows = tables[0].children;
+  for (const row of rows) expect(row.children).toHaveLength(4);
+  return rows.slice(1).map((row) => row.children.map((cell) => cell.children.map((node) => {
+    expect(["text", "inlineCode"]).toContain(node.type);
+    return "value" in node ? node.value : "";
+  }).join("")));
+}
+
+describe("timeline Markdown review regressions", () => {
+
+  it("distinguishes an omitted matching entry from an empty result", async () => {
+    writeHistory([{ message: "x".repeat(70_000) }]);
+    const output = await markdown();
+    expect(output).not.toContain("No events found");
+    expect(output).toContain("_Some matching events were omitted by the entry or output limit; narrow the filters._");
+    expect(output).not.toContain("| Date");
+  });
+
+  it("preserves the source notice when a match is outside the retained lines", async () => {
+    writeHistory(Array.from({ length: 10_001 }, (_, index) => ({ message: index === 0 ? "older subject" : "recent" })));
+    const output = await markdown({ query: "older subject" });
+    expect(output).toContain("_No events found._");
+    expect(output).toContain("_Searched only the latest 8 MiB / 10,000 non-empty log lines; older history was not scanned._");
+  });
+
+  it("preserves both omission notices when all retained matching rows exceed the budget", async () => {
+    writeHistory([{ message: "old" }, ...Array.from({ length: 9999 }, () => ({ message: "unrelated" })), { message: "oversize " + "x".repeat(70_000) }]);
+    const output = await markdown({ query: "oversize" });
+    expect(output).not.toContain("No events found");
+    expect(output).toContain("_Some matching events were omitted");
+    expect(output).toContain("_Searched only the latest");
+  });
+
+  it.each([
+    "pipe | end", "backslash \\| end", "two \\\\| end", "trailing \\",
+    "bare\rcarriage\nnewline\r\npair", "`tick` and ``two``", "`edge", "edge`", "```", "  spaced  ",
+  ])("round-trips table messages and code paths through a GFM parser: %j", async (value) => {
+    writeHistory([{ message: value, files: [value] }]);
+    const rows = parsedRows(await markdown());
+    const normalized = value.replace(/\r\n|[\r\n]/g, " ");
+    expect(rows).toEqual([["2026-05-14", "note", normalized.trim(), normalized]]);
+  });
+
+  it.each(["|".repeat(40_000), "\\|".repeat(20_000), "界".repeat(22_000)])("omits complete rows whose escaped UTF-8 output cannot fit (%#)", async (message) => {
+    writeHistory([{ message: "small older row" }, { message }]);
+    const output = await markdown();
+    expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(65_536);
+    expect(parsedRows(output)).toEqual([["2026-05-14", "note", "small older row", "—"]]);
+    expect(output).toContain("_Some matching events were omitted");
+  });
+
+  it("fits a complete escaped row at the byte boundary with both notices", async () => {
+    const history = (message: string) => writeHistory([
+      ...Array.from({ length: 9999 }, () => ({ message: "unrelated" })),
+      { message: "match older" }, { message },
+    ]);
+    history("match");
+    const baseline = await markdown({ query: "match", limit: 1 });
+    const padding = Math.floor((65_536 - Buffer.byteLength(baseline, "utf8")) / 2);
+    const message = "match" + "|".repeat(padding);
+    history(message);
+    const output = await markdown({ query: "match", limit: 1 });
+    expect(Buffer.byteLength(output, "utf8")).toBeGreaterThanOrEqual(65_535);
+    expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(65_536);
+    expect(parsedRows(output)).toEqual([["2026-05-14", "note", message, "—"]]);
+    expect(output).toContain("_Some matching events were omitted");
+    expect(output).toContain("_Searched only the latest");
+    history(message + "|");
+    const overflow = await markdown({ query: "match", limit: 1 });
+    expect(Buffer.byteLength(overflow, "utf8")).toBeLessThanOrEqual(65_536);
+    expect(overflow).not.toContain("| Date");
+    expect(overflow).not.toContain("No events found");
+    expect(overflow).toContain("_Some matching events were omitted");
+    expect(overflow).toContain("_Searched only the latest");
+  });
+
+  it("budgets header, final newlines, both notices and expanded file cells", async () => {
+    writeHistory([
+      { message: "outside scan" },
+      ...Array.from({ length: 10_000 }, () => ({ message: "界".repeat(200), files: ["|".repeat(1000)] })),
+    ]);
+    const output = await markdown({ limit: 200 });
+    expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(65_536);
+    const rows = parsedRows(output);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row).toEqual(["2026-05-14", "note", "界".repeat(200), "|".repeat(1000)]);
+    expect(output).toContain("_Some matching events were omitted");
+    expect(output).toContain("_Searched only the latest");
+  });
+});
 
 describe("bounded relevant timeline", () => {
   it("combines literal subject, exact recorded files, kind, and date filters", async () => {
@@ -187,5 +296,33 @@ describe("events", () => {
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     await runTimeline(config, { json: true });
     expect(spy.mock.calls.at(-1)?.[0]).toContain('"events"');
+  });
+
+  it("timeline --format md emits a valid Markdown table (#55)", async () => {
+    await runLog(config, "chose | the | bounded resolver", { kind: "decision", files: ["ROUTER.md"] });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runTimeline(config, { format: "md" });
+    const lines = spy.mock.calls.map((call) => String(call[0]));
+    expect(lines[0]).toBe("| Date | Type | Event | Files |");
+    expect(lines[1]).toBe("|---|---|---|---|");
+    const row = lines[2]!;
+    expect(row).toMatch(/^\| \d{4}-\d{2}-\d{2} \| decision \| /);
+    expect(row).toContain("chose \\| the \\| bounded resolver");
+    expect(row).toContain("`ROUTER.md`");
+  });
+
+  it("timeline --format md emits a placeholder for an empty log", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runTimeline(config, { format: "md" });
+    expect(spy.mock.calls.at(-1)?.[0]).toBe("_No events found._");
+  });
+
+  it("timeline default output is unchanged when --format is absent", async () => {
+    await runLog(config, "plain note", { kind: "note" });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runTimeline(config, {});
+    const rendered = spy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(rendered).toContain("plain note");
+    expect(rendered).not.toContain("|---");
   });
 });
