@@ -34,6 +34,7 @@ import {
   isPerFileCorpusLimitError,
 } from "./corpus-policy.js";
 import { graphConfigIdentity } from "./config-identity.js";
+import { captureGraphCoverage, GRAPH_COVERAGE_METADATA_KEY } from "./coverage.js";
 import { DB_SCHEMA_VERSION, markGraphReady, openGraphDatabase } from "./db/database.js";
 import {
   GraphStore,
@@ -398,6 +399,7 @@ class GraphEngineImpl implements GraphEngine {
         && snapshot.indexedBranch === gitBeforeStaging.branch
         && sourceCorpusMatchesFileRecords(currentCorpus, store.getAllFileRecords())
         && semanticInputsMatchSnapshot(this.rootDir, snapshot.semanticInputs)) {
+        store.setMetadata(GRAPH_COVERAGE_METADATA_KEY, captureGraphCoverage(this.rootDir));
         return { filesIndexed: 0, nodesCreated: 0, edgesCreated: 0, durationMs: Date.now() - started };
       }
     }
@@ -465,6 +467,7 @@ class GraphEngineImpl implements GraphEngine {
     // Continuity reads above may be substantial on a mature index. Re-probe
     // only after they finish, at the final synchronous boundary before the
     // snapshot is constructed and its publication transaction begins.
+    const coverage = captureGraphCoverage(root);
     const git = verifyPublicationInputs(
       root,
       staged,
@@ -537,6 +540,7 @@ class GraphEngineImpl implements GraphEngine {
       store.setMetadata("resolver_version", RESOLVER_VERSION);
       store.setMetadata("config_hash", staged.configHash);
       store.setMetadata("grammar_hash", staged.grammarHash);
+      store.setMetadata(GRAPH_COVERAGE_METADATA_KEY, coverage);
       store.setMetadata(GRAPH_SNAPSHOT_METADATA_KEY, serializeGraphSnapshot(snapshot));
       markGraphReady(this.db!, staged.manifestHash);
     });

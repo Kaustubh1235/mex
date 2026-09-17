@@ -170,6 +170,23 @@ function groupedCounts(db, table, column, where = null) {
 }
 
 function normalizeProjectMetadataRow(row) {
+  if (row.key === "unindexed_source_coverage") {
+    const cache = JSON.parse(row.value);
+    if (cache === null) return { ...row, value: null };
+    assertExactKeys(cache, ["version", "policy", "histogram", "directories"], "coverage cache");
+    if (cache.version !== 1 || typeof cache.policy !== "string" || !Array.isArray(cache.directories)
+      || cache.directories.length > 2048) invalidGraphSnapshot("invalid coverage cache");
+    for (const directory of cache.directories) {
+      assertExactKeys(directory, ["path", "stamp"], "coverage directory");
+      if ((directory.path !== "." && !isSafeRelativePath(directory.path))
+        || typeof directory.stamp !== "string" || !/^\d+:\d+:\d+:\d+$/u.test(directory.stamp)) {
+        invalidGraphSnapshot("invalid coverage directory");
+      }
+    }
+    // Directory entry clocks/inodes are checkout-local freshness witnesses, not
+    // graph meaning. Preserve every semantic coverage field in determinism hashes.
+    return { ...row, value: { version: cache.version, policy: cache.policy, histogram: cache.histogram } };
+  }
   if (row.key !== GRAPH_SNAPSHOT_METADATA_KEY) return row;
   if (typeof row.value !== "string") invalidGraphSnapshot("metadata value must be JSON text");
   let snapshot;
