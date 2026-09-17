@@ -1294,7 +1294,7 @@ describe("inspectGraphStatus", () => {
     expect(status.status).toBe("fresh");
   });
 
-  it("reports concurrently read live-source findings in sorted path order", async () => {
+  it.each([1, 8])("reports live-source findings in sorted path order when reading %i source(s) at once", async (concurrency) => {
     const root = temporaryRoot("mex-graph-concurrent-order-");
     const externalRoot = temporaryRoot("mex-graph-concurrent-order-external-");
     // More sources than one pass reads at once, with escapes spread across it.
@@ -1315,6 +1315,7 @@ describe("inspectGraphStatus", () => {
       projectRoot: root,
       now: NOW,
       internal: {
+        liveSourceReadConcurrency: concurrency,
         afterSourceRead(path, pass) {
           if (pass === "initial") read.add(path);
         },

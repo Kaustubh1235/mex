@@ -52,12 +52,18 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_CHANGED_PATHS = 100;
 const MAX_FRESH_OBSERVATION_ATTEMPTS = 2;
 /**
- * Source files one live-source pass reads at once. Every file still gets the
- * full contained, identity-stable read; concurrency only overlaps the syscall
- * latency between files. The bound also caps open descriptors and buffered
- * file contents.
+ * Source files one live-source pass reads at once on this platform.
+ *
+ * Every file gets the same contained, identity-stable read either way;
+ * concurrency only overlaps the syscall latency between files, and the bound
+ * caps open descriptors and buffered contents. It pays off where per-file
+ * syscalls are slow: on Windows one pass over a 3,253-file repository dropped
+ * from 5.0 s to 1.4 s. On Linux, where cached syscalls cost microseconds,
+ * routing each file through the libuv thread pool made graph refresh slower
+ * (+220 ms on 48 files), so other platforms keep the sequential synchronous
+ * walk.
  */
-const LIVE_SOURCE_READ_CONCURRENCY = 8;
+const LIVE_SOURCE_READ_CONCURRENCY = process.platform === "win32" ? 8 : 1;
 const MAX_SCHEMA_OBJECTS = 1_000;
 const MAX_METADATA_VALUE_BYTES = 4_096;
 const STATUS_METADATA_KEYS = Object.freeze([
@@ -262,6 +268,8 @@ export interface InspectGraphStatusOptions {
     beforeFreshValidation?: (attempt: number) => void | Promise<void>;
     afterSourceRead?: (path: string, pass: "initial" | "validation") => void;
     afterSemanticInputRead?: (path: string, pass: "initial" | "validation") => void;
+    /** Force the live-source read concurrency so every platform tests both walks. */
+    liveSourceReadConcurrency?: number;
     beforeDatabaseResult?: (status: GraphStatusKind, attempt: number) => void;
   };
 }
@@ -498,6 +506,7 @@ async function inspectGraphStatusAttempt(
     projectRoot,
     database.projectRootRealPath,
     maxChangedPaths,
+    context.options.internal?.liveSourceReadConcurrency ?? LIVE_SOURCE_READ_CONCURRENCY,
     (path) => context.options.internal?.afterSourceRead?.(path, "initial"),
   );
   diagnostics.push(...live.diagnostics);
@@ -1421,6 +1430,7 @@ async function validateFreshObservation(
     context.projectRoot,
     contained.database.projectRootRealPath,
     context.maxChangedPaths,
+    context.options.internal?.liveSourceReadConcurrency ?? LIVE_SOURCE_READ_CONCURRENCY,
     (path) => context.options.internal?.afterSourceRead?.(path, "validation"),
   );
   const semantic = inspectSemanticInputs(
@@ -1942,8 +1952,8 @@ type LiveSourceRead =
   | { readonly ok: false; readonly error: unknown };
 
 /**
- * Read every discovered source with at most {@link LIVE_SOURCE_READ_CONCURRENCY}
- * reads in flight, keyed by position in `paths`.
+ * Read every discovered source with at most `concurrency` reads in flight,
+ * keyed by position in `paths`.
  *
  * Paths are started strictly in order, so the started set is always a prefix.
  * Scheduling stops once completed reads alone exceed `maxSourceBytes`: that
@@ -1956,6 +1966,7 @@ async function readLiveSourcesConcurrently(
   projectRoot: string,
   projectRootRealPath: string,
   paths: readonly string[],
+  concurrency: number,
   afterSourceRead?: (path: string) => void,
 ): Promise<Array<LiveSourceRead | undefined>> {
   const results = new Array<LiveSourceRead | undefined>(paths.length);
@@ -1983,16 +1994,37 @@ async function readLiveSourcesConcurrently(
     }
   };
   await Promise.all(Array.from(
-    { length: Math.min(LIVE_SOURCE_READ_CONCURRENCY, paths.length) },
+    { length: Math.min(concurrency, paths.length) },
     worker,
   ));
   return results;
+}
+
+/** One sequential contained read, captured the same way as a concurrent one. */
+function readLiveSourceSync(
+  projectRoot: string,
+  projectRootRealPath: string,
+  path: string,
+  afterSourceRead?: (path: string) => void,
+): LiveSourceRead {
+  try {
+    const content = readStableContainedUtf8File(
+      projectRoot,
+      projectRootRealPath,
+      path,
+      () => afterSourceRead?.(path),
+    );
+    return { ok: true, bytes: Buffer.byteLength(content, "utf8"), hash: sha256(content) };
+  } catch (error) {
+    return { ok: false, error };
+  }
 }
 
 async function inspectLiveSources(
   projectRoot: string,
   projectRootRealPath: string,
   diagnosticLimit: number,
+  concurrency: number,
   afterSourceRead?: (path: string) => void,
 ): Promise<LiveSources> {
   const diagnostics: Diagnostic[] = [];
@@ -2037,19 +2069,26 @@ async function inspectLiveSources(
 
   let complete = true;
   let sourceBytes = 0;
-  const reads = await readLiveSourcesConcurrently(
-    projectRoot,
-    projectRootRealPath,
-    matches,
-    afterSourceRead,
-  );
-  // Account in sorted path order exactly as a sequential walk would, so
-  // hashes, skips, the corpus byte limit and diagnostic order do not depend on
-  // which read finished first.
+  // Concurrent reads are gathered first; the sequential walk reads each file
+  // as it is accounted, so it stops reading at a corpus-wide limit exactly as
+  // before. Either way accounting runs in sorted path order, so hashes, skips,
+  // the corpus byte limit and diagnostic order do not depend on which read
+  // finished first.
+  const reads = concurrency > 1
+    ? await readLiveSourcesConcurrently(
+      projectRoot,
+      projectRootRealPath,
+      matches,
+      concurrency,
+      afterSourceRead,
+    )
+    : null;
   for (const [index, path] of matches.entries()) {
     discoveredPaths.add(path);
     try {
-      const read = reads[index];
+      const read = reads
+        ? reads[index]
+        : readLiveSourceSync(projectRoot, projectRootRealPath, path, afterSourceRead);
       if (!read) {
         // Unreachable by construction (see readLiveSourcesConcurrently); fail
         // closed as the corpus-wide limit rather than report a partial pass
