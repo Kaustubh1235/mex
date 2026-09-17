@@ -45,6 +45,12 @@ const MENU = [
   "Exit",
 ] as const;
 
+function stalenessInactiveHint(count: number | undefined): string | null {
+  return count
+    ? "No scaffold files include a parseable last_updated; staleness checks inactive.\nAdd last_updated: YYYY-MM-DD to frontmatter to opt files in."
+    : null;
+}
+
 const EVENT_KINDS: EventKind[] = ["note", "decision", "risk", "todo"];
 const COLORS = {
   shell: "#5B8C5A",
@@ -238,6 +244,7 @@ export function Summary({ data, notice }: { data: DashboardData; notice: string 
   const errors = data.report.issues.filter((i) => i.severity === "error").length;
   const warnings = data.report.issues.filter((i) => i.severity === "warning").length;
   const scoreColor = data.report.score >= 80 ? "green" : data.report.score >= 50 ? "yellow" : "red";
+  const stalenessInactive = stalenessInactiveHint(data.heartbeat.filesWithoutLastUpdated);
   const heartbeatColor = data.heartbeat.ok ? "green" : "yellow";
   const heartbeatValue = data.heartbeat.ok ? 100 : Math.max(10, 100 - data.heartbeat.staleFiles.length * 25);
   const activity = eventActivityBars(data.events);
@@ -258,6 +265,7 @@ export function Summary({ data, notice }: { data: DashboardData; notice: string 
       color: heartbeatColor,
       detail: `${formatCount(data.heartbeat.staleFiles.length, "stale file")}`,
     }),
+    stalenessInactive ? h(Text, { color: "yellow" }, stalenessInactive) : null,
     h(StatusLine, {
       label: "Graph",
       value: graph.status === "fresh" ? "Fresh" : "Attention",
@@ -367,9 +375,12 @@ function CheckPanel({ data }: { data: DashboardData }) {
 }
 
 export function HeartbeatPanel({ data }: { data: DashboardData }) {
+  const stalenessInactive = stalenessInactiveHint(data.heartbeat.filesWithoutLastUpdated);
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "Heartbeat"),
-    data.heartbeat.ok ? h(Text, { color: "green" }, "HEARTBEAT_OK · scaffold is fresh") : null,
+    data.heartbeat.ok && !stalenessInactive ? h(Text, { color: "green" }, "HEARTBEAT_OK · scaffold is fresh") : null,
+    data.heartbeat.ok && stalenessInactive ? h(Text, { color: "yellow" }, "HEARTBEAT_OK · staleness checks inactive") : null,
+    stalenessInactive ? h(Text, { dimColor: true }, stalenessInactive) : null,
     ...data.heartbeat.staleFiles.map((f) => h(Text, { key: f.file }, `Stale ${f.file} (${f.days} days)`)),
     data.heartbeat.memoryCleanupDue ? h(Text, null, "Memory cleanup is due.") : null,
     ...data.heartbeat.oldDailyMemoryFiles.map((f) => h(Text, { key: f }, `Old memory ${f}`)),
@@ -381,6 +392,7 @@ export function DoctorPanel({ data }: { data: DashboardData }) {
   const warnings = data.report.issues.filter((i) => i.severity === "warning").length;
   const graphHealthy = data.report.graphStatus.status === "fresh";
   const graphDiagnostic = graphPrimaryDiagnostic(data.report.graphStatus);
+  const stalenessInactive = stalenessInactiveHint(data.heartbeat.filesWithoutLastUpdated);
   const healthy = errors === 0 && data.heartbeat.ok && graphHealthy;
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "Doctor summary"),
@@ -388,7 +400,10 @@ export function DoctorPanel({ data }: { data: DashboardData }) {
     h(Text, null, `Drift ${data.report.score}/100 (${errors} errors, ${warnings} warnings)`),
     h(Text, null, `Graph ${data.report.graphStatus.status} (${graphChangeDetail(data.report.graphStatus)})`),
     graphDiagnostic ? h(Text, null, `Graph detail: ${graphDiagnostic}`) : null,
-    h(Text, null, data.heartbeat.ok ? "Heartbeat OK" : "Run `mex heartbeat` for details."),
+    h(Text, null, data.heartbeat.ok
+      ? (stalenessInactive ? "Heartbeat OK (staleness checks inactive)" : "Heartbeat OK")
+      : "Run `mex heartbeat` for details."),
+    stalenessInactive ? h(Text, { dimColor: true }, stalenessInactive) : null,
     h(Text, null, `${data.events.length} logged events`),
   );
 }
